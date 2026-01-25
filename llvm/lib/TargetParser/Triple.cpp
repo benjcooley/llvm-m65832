@@ -46,6 +46,7 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
   case lanai:          return "lanai";
   case loongarch32:    return "loongarch32";
   case loongarch64:    return "loongarch64";
+  case m65832:         return "m65832";
   case m68k:           return "m68k";
   case mips64:         return "mips64";
   case mips64el:       return "mips64el";
@@ -195,6 +196,7 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
   case ppc:
   case ppcle:       return "ppc";
 
+  case m65832:      return "m65832";
   case m68k:        return "m68k";
 
   case mips:
@@ -464,6 +466,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
       .Case("armeb", armeb)
       .Case("avr", avr)
       .StartsWith("bpf", BPFArch)
+      .Case("m65832", m65832)
       .Case("m68k", m68k)
       .Case("mips", mips)
       .Case("mipsel", mipsel)
@@ -615,6 +618,7 @@ static Triple::ArchType parseArch(StringRef ArchName) {
           .Case("thumb", Triple::thumb)
           .Case("thumbeb", Triple::thumbeb)
           .Case("avr", Triple::avr)
+          .Case("m65832", Triple::m65832)
           .Case("m68k", Triple::m68k)
           .Case("msp430", Triple::msp430)
           .Cases({"mips", "mipseb", "mipsallegrex", "mipsisa32r6", "mipsr6"},
@@ -1003,6 +1007,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
   case Triple::lanai:
   case Triple::loongarch32:
   case Triple::loongarch64:
+  case Triple::m65832:
   case Triple::m68k:
   case Triple::mips64:
   case Triple::mips64el:
@@ -1734,6 +1739,7 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::kalimba:
   case llvm::Triple::lanai:
   case llvm::Triple::loongarch32:
+  case llvm::Triple::m65832:
   case llvm::Triple::m68k:
   case llvm::Triple::mips:
   case llvm::Triple::mipsel:
@@ -2115,6 +2121,7 @@ bool Triple::isLittleEndian() const {
   case Triple::kalimba:
   case Triple::loongarch32:
   case Triple::loongarch64:
+  case Triple::m65832:
   case Triple::mips64el:
   case Triple::mipsel:
   case Triple::msp430:
