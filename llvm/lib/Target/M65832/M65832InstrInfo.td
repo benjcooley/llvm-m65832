@@ -961,6 +961,9 @@ let isCall = 1 in {
   }
 }
 
+// Pattern for external symbols (library calls like __addsf3, etc.)
+def : Pat<(M65832call texternalsym:$target), (JSR texternalsym:$target)>;
+
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RTS : F0<0x60, (outs), (ins), "RTS", [(M65832retflag)]> {
     let Uses = [SP];

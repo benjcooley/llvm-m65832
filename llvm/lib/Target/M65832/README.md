@@ -24,6 +24,7 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 | Conditional branches | ✅ | BEQ, BNE, BMI, BPL, etc. |
 | ELF object output | ✅ | EM_M65832 = 0x6583 |
 | DWARF debug info | ✅ | CFI directives supported |
+| **Floating point (soft)** | ✅ | Via compiler-rt/libgcc libcalls |
 
 ### Known Limitations
 
@@ -31,6 +32,7 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 - Some condition codes (GT, LE) use approximations
 - Comparison falls back to LDA/CMP instead of CMPR_DP
 - No hardware multiply/divide (uses libcalls)
+- No hardware FPU (uses soft-float libcalls)
 - C++ exceptions not yet supported
 
 ## Building

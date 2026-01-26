@@ -123,6 +123,123 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   
   // Stack alignment
   setMinStackArgumentAlignment(Align(4));
+  
+  // =========================================================================
+  // Floating Point Support (soft-float via library calls)
+  // =========================================================================
+  // M65832 has no FPU, so all floating point operations use software emulation
+  // via compiler-rt/libgcc builtins (__addsf3, __mulsf3, etc.)
+  
+  // f32 operations - all expand to libcalls
+  setOperationAction(ISD::FADD, MVT::f32, Expand);
+  setOperationAction(ISD::FSUB, MVT::f32, Expand);
+  setOperationAction(ISD::FMUL, MVT::f32, Expand);
+  setOperationAction(ISD::FDIV, MVT::f32, Expand);
+  setOperationAction(ISD::FREM, MVT::f32, Expand);
+  setOperationAction(ISD::FNEG, MVT::f32, Expand);
+  setOperationAction(ISD::FABS, MVT::f32, Expand);
+  setOperationAction(ISD::FSQRT, MVT::f32, Expand);
+  setOperationAction(ISD::FSIN, MVT::f32, Expand);
+  setOperationAction(ISD::FCOS, MVT::f32, Expand);
+  setOperationAction(ISD::FPOW, MVT::f32, Expand);
+  setOperationAction(ISD::FLOG, MVT::f32, Expand);
+  setOperationAction(ISD::FLOG2, MVT::f32, Expand);
+  setOperationAction(ISD::FLOG10, MVT::f32, Expand);
+  setOperationAction(ISD::FEXP, MVT::f32, Expand);
+  setOperationAction(ISD::FEXP2, MVT::f32, Expand);
+  setOperationAction(ISD::FEXP10, MVT::f32, Expand);
+  setOperationAction(ISD::FCEIL, MVT::f32, Expand);
+  setOperationAction(ISD::FFLOOR, MVT::f32, Expand);
+  setOperationAction(ISD::FTRUNC, MVT::f32, Expand);
+  setOperationAction(ISD::FRINT, MVT::f32, Expand);
+  setOperationAction(ISD::FNEARBYINT, MVT::f32, Expand);
+  setOperationAction(ISD::FROUND, MVT::f32, Expand);
+  setOperationAction(ISD::FROUNDEVEN, MVT::f32, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
+  setOperationAction(ISD::FMINNUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMAXNUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMINIMUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMAXIMUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMA, MVT::f32, Expand);
+  setOperationAction(ISD::FMAD, MVT::f32, Expand);
+  
+  // f64 operations - all expand to libcalls
+  setOperationAction(ISD::FADD, MVT::f64, Expand);
+  setOperationAction(ISD::FSUB, MVT::f64, Expand);
+  setOperationAction(ISD::FMUL, MVT::f64, Expand);
+  setOperationAction(ISD::FDIV, MVT::f64, Expand);
+  setOperationAction(ISD::FREM, MVT::f64, Expand);
+  setOperationAction(ISD::FNEG, MVT::f64, Expand);
+  setOperationAction(ISD::FABS, MVT::f64, Expand);
+  setOperationAction(ISD::FSQRT, MVT::f64, Expand);
+  setOperationAction(ISD::FSIN, MVT::f64, Expand);
+  setOperationAction(ISD::FCOS, MVT::f64, Expand);
+  setOperationAction(ISD::FPOW, MVT::f64, Expand);
+  setOperationAction(ISD::FLOG, MVT::f64, Expand);
+  setOperationAction(ISD::FLOG2, MVT::f64, Expand);
+  setOperationAction(ISD::FLOG10, MVT::f64, Expand);
+  setOperationAction(ISD::FEXP, MVT::f64, Expand);
+  setOperationAction(ISD::FEXP2, MVT::f64, Expand);
+  setOperationAction(ISD::FEXP10, MVT::f64, Expand);
+  setOperationAction(ISD::FCEIL, MVT::f64, Expand);
+  setOperationAction(ISD::FFLOOR, MVT::f64, Expand);
+  setOperationAction(ISD::FTRUNC, MVT::f64, Expand);
+  setOperationAction(ISD::FRINT, MVT::f64, Expand);
+  setOperationAction(ISD::FNEARBYINT, MVT::f64, Expand);
+  setOperationAction(ISD::FROUND, MVT::f64, Expand);
+  setOperationAction(ISD::FROUNDEVEN, MVT::f64, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
+  setOperationAction(ISD::FMINNUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMAXNUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMINIMUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMAXIMUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMA, MVT::f64, Expand);
+  setOperationAction(ISD::FMAD, MVT::f64, Expand);
+  
+  // Floating point conversions - expand to libcalls
+  setOperationAction(ISD::FP_TO_SINT, MVT::i32, Expand);
+  setOperationAction(ISD::FP_TO_UINT, MVT::i32, Expand);
+  setOperationAction(ISD::SINT_TO_FP, MVT::i32, Expand);
+  setOperationAction(ISD::UINT_TO_FP, MVT::i32, Expand);
+  setOperationAction(ISD::FP_TO_SINT, MVT::i64, Expand);
+  setOperationAction(ISD::FP_TO_UINT, MVT::i64, Expand);
+  setOperationAction(ISD::SINT_TO_FP, MVT::i64, Expand);
+  setOperationAction(ISD::UINT_TO_FP, MVT::i64, Expand);
+  
+  // f32 <-> f64 conversions
+  setOperationAction(ISD::FP_EXTEND, MVT::f64, Expand);
+  setOperationAction(ISD::FP_ROUND, MVT::f32, Expand);
+  
+  // Floating point comparisons - expand to libcalls
+  setOperationAction(ISD::SETCC, MVT::f32, Expand);
+  setOperationAction(ISD::SETCC, MVT::f64, Expand);
+  setOperationAction(ISD::BR_CC, MVT::f32, Expand);
+  setOperationAction(ISD::BR_CC, MVT::f64, Expand);
+  setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
+  setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
+  setOperationAction(ISD::SELECT, MVT::f32, Expand);
+  setOperationAction(ISD::SELECT, MVT::f64, Expand);
+  
+  // Floating point constants - we can't load them directly
+  setOperationAction(ISD::ConstantFP, MVT::f32, Expand);
+  setOperationAction(ISD::ConstantFP, MVT::f64, Expand);
+  
+  // Bitcast between float and int is free (same registers)
+  setOperationAction(ISD::BITCAST, MVT::f32, Legal);
+  setOperationAction(ISD::BITCAST, MVT::i32, Legal);
+  setOperationAction(ISD::BITCAST, MVT::f64, Expand); // Needs i64 handling
+  setOperationAction(ISD::BITCAST, MVT::i64, Expand);
+  
+  // Load/store of floats - same as integers
+  setOperationAction(ISD::LOAD, MVT::f32, Legal);
+  setOperationAction(ISD::STORE, MVT::f32, Legal);
+  setOperationAction(ISD::LOAD, MVT::f64, Expand);  // Needs splitting to 2x32
+  setOperationAction(ISD::STORE, MVT::f64, Expand);
+  
+  // Set libcall names for soft-float operations
+  // Most are already set by default to the standard names:
+  // __addsf3, __adddf3, __subsf3, __subdf3, __mulsf3, __muldf3,
+  // __divsf3, __divdf3, __fixsfsi, __fixdfsi, __floatsisf, __floatsidf, etc.
 }
 
 SDValue M65832TargetLowering::LowerOperation(SDValue Op,
