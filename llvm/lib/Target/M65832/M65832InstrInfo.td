@@ -76,6 +76,11 @@ def MemOp : Operand<i32> {
   let MIOperandInfo = (ops GPR, i32imm);
 }
 
+// Bank-relative absolute address (B+$xxxx)
+def BankRelOp : Operand<i32> {
+  let PrintMethod = "printBankRelAddr";
+}
+
 // Immediate operands
 def imm8  : Operand<i32>, ImmLeaf<i32, [{return isUInt<8>(Imm);}]>;
 def imm16 : Operand<i32>, ImmLeaf<i32, [{return isUInt<16>(Imm);}]>;
@@ -89,7 +94,7 @@ def brtarget : Operand<OtherVT> {
 
 // Call target (for JSR)
 def calltarget : Operand<i32> {
-  let PrintMethod = "printOperand";
+  let PrintMethod = "printBankRelAddr";
   let EncoderMethod = "getCallTargetOpValue";
 }
 
@@ -313,110 +318,102 @@ let isCodeGenOnly = 1, Defs = [SR] in {
 // NOTE: shift-by-1 now uses SHLR/SHRR (barrel shifter) via the general patterns
 
 //===----------------------------------------------------------------------===//
-// Extended Register-Targeted ALU Instructions ($02 $E8)
+// Extended ALU Instructions ($02 $80-$97)
 // These bypass the accumulator for direct register-to-register operations
 //===----------------------------------------------------------------------===//
 
-// Op codes: 0=LD, 1=ADC, 2=SBC, 3=AND, 4=ORA, 5=EOR, 6=CMP
-// Mode $1 = dp source
+// Op codes: LD=$80, ST=$81, ADC=$82, SBC=$83, AND=$84, ORA=$85, EOR=$86, CMP=$87
+// Mode: size=long, target=Rn, addr_mode=dp or imm
 
 let Defs = [SR] in {
   // ADD (via ADC): dest = dest + src
-  // Op=1 (ADC), Mode=$1 (dp) -> opmode = $11
-  def ADDR_DP : FE8_DP<0x11, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "ADD\t$dst,$src2",
+  def ADDR_DP : FE8_DP<0x82, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "ADC.L\t$dst,$src2",
                        [(set GPR:$dst, (add GPR:$src1, GPR:$src2))]> {
     let Constraints = "$src1 = $dst";
   }
 
   // SUB (via SBC): dest = dest - src
-  // Op=2 (SBC), Mode=$1 (dp) -> opmode = $21
-  def SUBR_DP : FE8_DP<0x21, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "SUB\t$dst,$src2",
+  def SUBR_DP : FE8_DP<0x83, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "SBC.L\t$dst,$src2",
                        [(set GPR:$dst, (sub GPR:$src1, GPR:$src2))]> {
     let Constraints = "$src1 = $dst";
   }
 
   // AND: dest = dest & src
-  // Op=3 (AND), Mode=$1 (dp) -> opmode = $31
-  def ANDR_DP : FE8_DP<0x31, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "AND\t$dst,$src2",
+  def ANDR_DP : FE8_DP<0x84, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "AND.L\t$dst,$src2",
                        [(set GPR:$dst, (and GPR:$src1, GPR:$src2))]> {
     let Constraints = "$src1 = $dst";
   }
 
   // ORA: dest = dest | src
-  // Op=4 (ORA), Mode=$1 (dp) -> opmode = $41
-  def ORAR_DP : FE8_DP<0x41, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "ORA\t$dst,$src2",
+  def ORAR_DP : FE8_DP<0x85, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "ORA.L\t$dst,$src2",
                        [(set GPR:$dst, (or GPR:$src1, GPR:$src2))]> {
     let Constraints = "$src1 = $dst";
   }
 
   // EOR: dest = dest ^ src
-  // Op=5 (EOR), Mode=$1 (dp) -> opmode = $51
-  def EORR_DP : FE8_DP<0x51, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "EOR\t$dst,$src2",
+  def EORR_DP : FE8_DP<0x86, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "EOR.L\t$dst,$src2",
                        [(set GPR:$dst, (xor GPR:$src1, GPR:$src2))]> {
     let Constraints = "$src1 = $dst";
   }
 
   // CMP: flags = dest - src (no writeback)
-  // Op=6 (CMP), Mode=$1 (dp) -> opmode = $61
-  def CMPR_DP : FE8_DP<0x61, (outs), (ins GPR:$lhs, GPR:$rhs),
-                       "CMP\t$lhs,$rhs",
+  def CMPR_DP : FE8_DP<0x87, (outs), (ins GPR:$lhs, GPR:$rhs),
+                       "CMP.L\t$lhs,$rhs",
                        [(M65832cmp GPR:$lhs, GPR:$rhs)]>;
 
   // MOV (via LD): dest = src
-  // Op=0 (LD), Mode=$1 (dp) -> opmode = $01
-  def MOVR_DP : FE8_DP<0x01, (outs GPR:$dst), (ins GPR:$src),
-                       "LD\t$dst,$src",
+  def MOVR_DP : FE8_DP<0x80, (outs GPR:$dst), (ins GPR:$src),
+                       "LD.L\t$dst,$src",
                        []>;
 
   // Immediate forms (Mode=$2)
-  // Op=1 (ADC), Mode=$2 (imm) -> opmode = $12
-  def ADDR_IMM : FE8_IMM<0x12, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "ADD\t$dst,#$imm",
+  def ADDR_IMM : FE8_IMM<0x82, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
+                         "ADC.L\t$dst,#$imm",
                          [(set GPR:$dst, (add GPR:$src, imm:$imm))]> {
     let Constraints = "$src = $dst";
   }
 
-  def SUBR_IMM : FE8_IMM<0x22, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "SUB\t$dst,#$imm",
+  def SUBR_IMM : FE8_IMM<0x83, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
+                         "SBC.L\t$dst,#$imm",
                          [(set GPR:$dst, (sub GPR:$src, imm:$imm))]> {
     let Constraints = "$src = $dst";
   }
 
-  def ANDR_IMM : FE8_IMM<0x32, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "AND\t$dst,#$imm",
+  def ANDR_IMM : FE8_IMM<0x84, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
+                         "AND.L\t$dst,#$imm",
                          [(set GPR:$dst, (and GPR:$src, imm:$imm))]> {
     let Constraints = "$src = $dst";
   }
 
-  def ORAR_IMM : FE8_IMM<0x42, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "ORA\t$dst,#$imm",
+  def ORAR_IMM : FE8_IMM<0x85, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
+                         "ORA.L\t$dst,#$imm",
                          [(set GPR:$dst, (or GPR:$src, imm:$imm))]> {
     let Constraints = "$src = $dst";
   }
 
-  def EORR_IMM : FE8_IMM<0x52, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "EOR\t$dst,#$imm",
+  def EORR_IMM : FE8_IMM<0x86, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
+                         "EOR.L\t$dst,#$imm",
                          [(set GPR:$dst, (xor GPR:$src, imm:$imm))]> {
     let Constraints = "$src = $dst";
   }
 
-  def CMPR_IMM : FE8_IMM<0x62, (outs), (ins GPR:$lhs, i32imm:$rhs),
-                         "CMP\t$lhs,#$rhs",
+  def CMPR_IMM : FE8_IMM<0x87, (outs), (ins GPR:$lhs, i32imm:$rhs),
+                         "CMP.L\t$lhs,#$rhs",
                          [(M65832cmp GPR:$lhs, imm:$rhs)]>;
 
   // Load immediate into register
-  def LDR_IMM : FE8_IMM<0x02, (outs GPR:$dst), (ins i32imm:$imm),
-                        "LD\t$dst,#$imm",
+  def LDR_IMM : FE8_IMM<0x80, (outs GPR:$dst), (ins i32imm:$imm),
+                        "LD.L\t$dst,#$imm",
                         [(set GPR:$dst, imm:$imm)]>;
 }
 
 //===----------------------------------------------------------------------===//
-// Barrel Shifter Instructions ($02 $E9)
+// Barrel Shifter Instructions ($02 $98)
 // Single-cycle shifts with constant or variable amount
 //===----------------------------------------------------------------------===//
 
@@ -464,7 +461,7 @@ let Defs = [SR] in {
 }
 
 //===----------------------------------------------------------------------===//
-// Extend Instructions ($02 $EA)
+// Extend Instructions ($02 $99)
 //===----------------------------------------------------------------------===//
 
 let Defs = [SR] in {
@@ -573,13 +570,13 @@ def LDA_IMM : F8<0xA9, (outs ACC:$dst), (ins i32imm:$imm),
                 "LDA\t#$imm",
                 []>;
 
-// LDA absolute (32-bit address)
-def LDA_ABS : F9<0xAD, (outs ACC:$dst), (ins i32imm:$addr),
+// LDA absolute (B+$xxxx)
+def LDA_ABS : F9<0xAD, (outs ACC:$dst), (ins BankRelOp:$addr),
                 "LDA\t$addr",
                 []>;
 
 // LDA absolute indexed by X
-def LDA_ABS_X : F9<0xBD, (outs ACC:$dst), (ins i32imm:$addr),
+def LDA_ABS_X : F9<0xBD, (outs ACC:$dst), (ins BankRelOp:$addr),
                   "LDA\t$addr,X",
                   []>;
 
@@ -623,13 +620,13 @@ def STA_DP : F1<0x85, (outs), (ins ACC:$src, DPOp:$dst),
                "STA\t$dst",
                []>;
 
-// STA absolute (32-bit address)
-def STA_ABS : F9<0x8D, (outs), (ins ACC:$src, i32imm:$addr),
+// STA absolute (B+$xxxx)
+def STA_ABS : F9<0x8D, (outs), (ins ACC:$src, BankRelOp:$addr),
                 "STA\t$addr",
                 []>;
 
 // STA absolute indexed by X
-def STA_ABS_X : F9<0x9D, (outs), (ins ACC:$src, i32imm:$addr),
+def STA_ABS_X : F9<0x9D, (outs), (ins ACC:$src, BankRelOp:$addr),
                   "STA\t$addr,X",
                   []>;
 
@@ -660,7 +657,7 @@ def STZ_DP : F1<0x64, (outs), (ins DPOp:$dst),
                "STZ\t$dst",
                []>;
 
-def STZ_ABS : F9<0x9C, (outs), (ins i32imm:$addr),
+def STZ_ABS : F9<0x9C, (outs), (ins BankRelOp:$addr),
                 "STZ\t$addr",
                 []>;
 
@@ -939,7 +936,7 @@ def BRL : F6<0x82, (outs), (ins brtarget:$target), "BRL\t$target", []>;
 //===----------------------------------------------------------------------===//
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
-  def JMP : F3<0x4C, (outs), (ins brtarget:$target), "JMP\t$target", []>;
+  def JMP : F3<0x4C, (outs), (ins BankRelOp:$target), "JMP\t$target", []>;
 }
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
@@ -1091,13 +1088,13 @@ def FENCE : F7_Imp<0x50, (outs), (ins), "fence", []> {
 }
 
 // TTA - Transfer T to A
-def TTA : F7_Imp<0x86, (outs ACC:$dst), (ins), "tta", []> {
+def TTA : F7_Imp<0x9A, (outs ACC:$dst), (ins), "tta", []> {
   let Uses = [T];
   let Defs = [SR];
 }
 
 // TAT - Transfer A to T
-def TAT : F7_Imp<0x87, (outs), (ins ACC:$src), "tat", []> {
+def TAT : F7_Imp<0x9B, (outs), (ins ACC:$src), "tat", []> {
   let Defs = [T];
 }
 

@@ -13,18 +13,15 @@
 // - Direct Page (2 bytes): opcode + dp_addr
 // - Bank-relative 16 (3 bytes): opcode + addr_lo + addr_hi (B+$xxxx)
 // - Relative 8 (2 bytes): opcode + offset
-// - Abs32 (6 bytes): 0x42 + opcode + addr[0:31] ($xxxxxxxx)
-// - Imm32 (5 bytes): opcode + imm[0:31] (default 32-bit mode)
+// - Imm32 (5 bytes): opcode + imm[0:31] (32-bit mode)
 //
-// Prefix bytes:
-// - $42 = 32-bit absolute addressing mode
-// - $CB = byte data size (.B)
-// - $DB = word data size (.W)
-// - (no prefix) = long data size (.L) - 32-bit default
-//
-// Special encodings:
-// - $42 $CB = WAI (Wait for Interrupt)
-// - $42 $DB = STP (Stop)
+// Extended encodings ($02 prefix):
+// - Ext. implied: $02 + ext_op
+// - Ext. DP: $02 + ext_op + dp
+// - Ext. imm8: $02 + ext_op + imm8
+// - Ext. ALU: $02 + ext_op + mode + dest + src...
+// - Barrel shifter: $02 $98 op|cnt dest src
+// - Extend ops: $02 $99 subop dest src
 //
 //===----------------------------------------------------------------------===//
 
@@ -45,17 +42,7 @@ using namespace llvm;
 
 #define DEBUG_TYPE "mccodeemitter"
 
-// Prefix bytes for M65832 encoding
-// Valid ordering: DATA prefix first, then ADDRESS prefix
-// Invalid ordering (addr before data) is repurposed for WAI/STP
-static const uint8_t ABS32_PREFIX = 0x42;  // 32-bit absolute addressing prefix
-static const uint8_t BYTE_PREFIX = 0xCB;   // Byte data size prefix (.B)
-static const uint8_t WORD_PREFIX = 0xDB;   // Word data size prefix (.W)
-// No data prefix = Long data size (.L) - 32-bit default
-//
-// Special encodings (invalid prefix sequences repurposed):
-// $42 $CB = WAI (Wait for Interrupt)
-// $42 $DB = STP (Stop Processor)
+static const uint8_t EXT_PREFIX = 0x02;  // Extended opcode prefix
 
 namespace {
 class M65832MCCodeEmitter : public MCCodeEmitter {
@@ -209,22 +196,34 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   // Misc
   case M65832::NOP:       return 0xEA;
   
-  // Extended instructions - these have special encoding
-  // Return 0 as the opcode is embedded in the instruction format
-  case M65832::ADDR_DP:   return 0x11;
-  case M65832::SUBR_DP:   return 0x21;
-  case M65832::ANDR_DP:   return 0x31;
-  case M65832::ORAR_DP:   return 0x41;
-  case M65832::EORR_DP:   return 0x51;
-  case M65832::CMPR_DP:   return 0x61;
-  case M65832::MOVR_DP:   return 0x01;
-  case M65832::ADDR_IMM:  return 0x12;
-  case M65832::SUBR_IMM:  return 0x22;
-  case M65832::ANDR_IMM:  return 0x32;
-  case M65832::ORAR_IMM:  return 0x42;
-  case M65832::EORR_IMM:  return 0x52;
-  case M65832::CMPR_IMM:  return 0x62;
-  case M65832::LDR_IMM:   return 0x02;
+  // Extended instructions ($02 prefix)
+  case M65832::MUL_DP:    return 0x00;
+  case M65832::MULU_DP:   return 0x01;
+  case M65832::DIV_DP:    return 0x04;
+  case M65832::DIVU_DP:   return 0x05;
+  case M65832::CAS_DP:    return 0x10;
+  case M65832::RSET:      return 0x30;
+  case M65832::RCLR:      return 0x31;
+  case M65832::TRAP:      return 0x40;
+  case M65832::FENCE:     return 0x50;
+  case M65832::TTA:       return 0x9A;
+  case M65832::TAT:       return 0x9B;
+  
+  // Extended ALU opcodes ($02 $80-$97)
+  case M65832::MOVR_DP:   return 0x80;
+  case M65832::LDR_IMM:   return 0x80;
+  case M65832::ADDR_DP:   return 0x82;
+  case M65832::ADDR_IMM:  return 0x82;
+  case M65832::SUBR_DP:   return 0x83;
+  case M65832::SUBR_IMM:  return 0x83;
+  case M65832::ANDR_DP:   return 0x84;
+  case M65832::ANDR_IMM:  return 0x84;
+  case M65832::ORAR_DP:   return 0x85;
+  case M65832::ORAR_IMM:  return 0x85;
+  case M65832::EORR_DP:   return 0x86;
+  case M65832::EORR_IMM:  return 0x86;
+  case M65832::CMPR_DP:   return 0x87;
+  case M65832::CMPR_IMM:  return 0x87;
   
   // Barrel shifter - opcode encodes op|cnt
   case M65832::SHLR:      return 0x00;
@@ -256,184 +255,219 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
                                               const MCSubtargetInfo &STI) const {
   const MCInstrDesc &Desc = MCII.get(MI.getOpcode());
   unsigned Size = Desc.getSize();
+  unsigned MIOp = MI.getOpcode();
   uint8_t Opcode = getOpcode(MI.getOpcode());
-  
-  // Get the instruction size category based on Size
+
+  auto emitImm8 = [&](const MCOperand &MO, unsigned Offset) {
+    if (MO.isImm()) {
+      emitByte(static_cast<uint8_t>(MO.getImm()), CB);
+    } else if (MO.isExpr()) {
+      Fixups.push_back(
+          MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_1)));
+      emitByte(0, CB);
+    } else {
+      emitByte(0, CB);
+    }
+  };
+
+  auto emitImm16 = [&](const MCOperand &MO, unsigned Offset) {
+    if (MO.isImm()) {
+      emitLE16(static_cast<uint16_t>(MO.getImm()), CB);
+    } else if (MO.isExpr()) {
+      Fixups.push_back(
+          MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_2)));
+      emitLE16(0, CB);
+    } else {
+      emitLE16(0, CB);
+    }
+  };
+
+  auto emitImm32 = [&](const MCOperand &MO, unsigned Offset) {
+    if (MO.isImm()) {
+      emitLE32(static_cast<uint32_t>(MO.getImm()), CB);
+    } else if (MO.isExpr()) {
+      Fixups.push_back(
+          MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_4)));
+      emitLE32(0, CB);
+    } else {
+      emitLE32(0, CB);
+    }
+  };
+
+  auto regToDP = [&](unsigned Reg) -> uint8_t {
+    if (Reg >= M65832::R0 && Reg <= M65832::R63)
+      return static_cast<uint8_t>((Reg - M65832::R0) * 4);
+    return 0;
+  };
+
+  auto emitDPOp = [&](const MCOperand &MO, unsigned Offset) {
+    if (MO.isReg()) {
+      emitByte(regToDP(MO.getReg()), CB);
+    } else {
+      emitImm8(MO, Offset);
+    }
+  };
+
+  // Extended instructions ($02 prefix)
+  switch (MIOp) {
+  case M65832::MUL_DP:
+  case M65832::MULU_DP:
+  case M65832::DIV_DP:
+  case M65832::DIVU_DP:
+  case M65832::CAS_DP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm8(MO, 2);
+    return;
+  }
+  case M65832::RSET:
+  case M65832::RCLR:
+  case M65832::FENCE:
+  case M65832::TTA:
+  case M65832::TAT: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    return;
+  }
+  case M65832::TRAP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm8(MO, 2);
+    return;
+  }
+
+  // Extended ALU (dp source)
+  case M65832::MOVR_DP:
+  case M65832::ADDR_DP:
+  case M65832::SUBR_DP:
+  case M65832::ANDR_DP:
+  case M65832::ORAR_DP:
+  case M65832::EORR_DP:
+  case M65832::CMPR_DP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0xA0, CB); // size=long, target=Rn, addr_mode=dp
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &SrcOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitDPOp(SrcOp, 4);
+    return;
+  }
+
+  // Extended ALU (immediate)
+  case M65832::LDR_IMM:
+  case M65832::ADDR_IMM:
+  case M65832::SUBR_IMM:
+  case M65832::ANDR_IMM:
+  case M65832::ORAR_IMM:
+  case M65832::EORR_IMM:
+  case M65832::CMPR_IMM: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0xB8, CB); // size=long, target=Rn, addr_mode=imm
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &ImmOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm32(ImmOp, 4);
+    return;
+  }
+
+  // Barrel shifter ($02 $98 op|cnt dest src)
+  case M65832::SHLR:
+  case M65832::SHRR:
+  case M65832::SARR:
+  case M65832::ROLR:
+  case M65832::RORR:
+  case M65832::SHLR_VAR:
+  case M65832::SHRR_VAR:
+  case M65832::SARR_VAR: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0x98, CB);
+    uint8_t opcnt = Opcode;
+    if (MI.getNumOperands() >= 3 && MI.getOperand(2).isImm())
+      opcnt = (Opcode & 0xE0) | (MI.getOperand(2).getImm() & 0x1F);
+    emitByte(opcnt, CB);
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);
+    else
+      emitByte(0, CB);
+    return;
+  }
+
+  // Extend ops ($02 $99 subop dest src)
+  case M65832::SEXT8:
+  case M65832::SEXT16:
+  case M65832::ZEXT8:
+  case M65832::ZEXT16:
+  case M65832::CLZ:
+  case M65832::CTZ:
+  case M65832::POPCNT: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0x99, CB);
+    emitByte(Opcode, CB);
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);
+    else
+      emitByte(0, CB);
+    return;
+  }
+  default:
+    break;
+  }
+
+  // Standard encodings by size
   switch (Size) {
   case 0:
   case 1:
-    // Implied or accumulator - just opcode
     emitByte(Opcode, CB);
     break;
-    
   case 2: {
-    // Direct Page or relative - opcode + 1 byte operand
     emitByte(Opcode, CB);
     if (MI.getNumOperands() > 0) {
       const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
-      if (MO.isImm()) {
-        emitByte(static_cast<uint8_t>(MO.getImm()), CB);
-      } else if (MO.isExpr()) {
-        // Add fixup for the operand
-        Fixups.push_back(MCFixup::create(1, MO.getExpr(), 
-                                         MCFixupKind(FK_Data_1)));
-        emitByte(0, CB);
-      } else {
-        emitByte(0, CB);
-      }
+      emitImm8(MO, 1);
     } else {
       emitByte(0, CB);
     }
     break;
   }
-    
   case 3: {
-    // Absolute 16-bit - opcode + 2 byte address
     emitByte(Opcode, CB);
     if (MI.getNumOperands() > 0) {
       const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
-      if (MO.isImm()) {
-        emitLE16(static_cast<uint16_t>(MO.getImm()), CB);
-      } else if (MO.isExpr()) {
-        Fixups.push_back(MCFixup::create(1, MO.getExpr(),
-                                         MCFixupKind(FK_Data_2)));
-        emitLE16(0, CB);
-      } else {
-        emitLE16(0, CB);
-      }
+      emitImm16(MO, 1);
     } else {
       emitLE16(0, CB);
     }
     break;
   }
-    
   case 5: {
-    // Could be:
-    // - WID prefix + opcode + 32-bit immediate ($42 op imm32)
-    // - Extended instruction ($02 $E8/E9/EA ...)
-    unsigned MIOp = MI.getOpcode();
-    
-    // Check if this is an extended instruction (FE8_DP, FE9, FEA)
-    if (MIOp >= M65832::ADDR_DP && MIOp <= M65832::POPCNT) {
-      // Extended instruction format
-      emitByte(0x02, CB);  // Extended prefix
-      
-      // Determine which extended opcode group
-      if (MIOp >= M65832::SHLR && MIOp <= M65832::SARR_VAR) {
-        // Barrel shifter: $02 $E9 [op|cnt] dest src
-        emitByte(0xE9, CB);
-        // For constant shifts, encode op|cnt
-        uint8_t opcnt = Opcode;
-        if (MI.getNumOperands() >= 3 && MI.getOperand(2).isImm()) {
-          opcnt = (Opcode & 0xE0) | (MI.getOperand(2).getImm() & 0x1F);
-        }
-        emitByte(opcnt, CB);
-        // dest (register number)
-        if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg()) {
-          unsigned Reg = MI.getOperand(0).getReg();
-          emitByte((Reg - M65832::R0) & 0x3F, CB);
-        } else {
-          emitByte(0, CB);
-        }
-        // src (register number)
-        if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg()) {
-          unsigned Reg = MI.getOperand(1).getReg();
-          emitByte((Reg - M65832::R0) & 0x3F, CB);
-        } else {
-          emitByte(0, CB);
-        }
-      } else if (MIOp >= M65832::SEXT8 && MIOp <= M65832::POPCNT) {
-        // Extend ops: $02 $EA subop dest src
-        emitByte(0xEA, CB);
-        emitByte(Opcode, CB);
-        // dest
-        if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg()) {
-          unsigned Reg = MI.getOperand(0).getReg();
-          emitByte((Reg - M65832::R0) & 0x3F, CB);
-        } else {
-          emitByte(0, CB);
-        }
-        // src
-        if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg()) {
-          unsigned Reg = MI.getOperand(1).getReg();
-          emitByte((Reg - M65832::R0) & 0x3F, CB);
-        } else {
-          emitByte(0, CB);
-        }
-      } else {
-        // Register-targeted ALU: $02 $E8 op|mode dest src
-        emitByte(0xE8, CB);
-        emitByte(Opcode, CB);
-        // dest (DP offset = reg * 4)
-        if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg()) {
-          unsigned Reg = MI.getOperand(0).getReg();
-          emitByte((Reg - M65832::R0) * 4, CB);
-        } else {
-          emitByte(0, CB);
-        }
-        // src (DP offset for _DP variants)
-        if (MI.getNumOperands() >= 2) {
-          const MCOperand &SrcOp = MI.getOperand(MI.getNumOperands() - 1);
-          if (SrcOp.isReg()) {
-            unsigned Reg = SrcOp.getReg();
-            emitByte((Reg - M65832::R0) * 4, CB);
-          } else if (SrcOp.isImm()) {
-            emitByte(static_cast<uint8_t>(SrcOp.getImm()), CB);
-          } else {
-            emitByte(0, CB);
-          }
-        } else {
-          emitByte(0, CB);
-        }
-      }
-    } else {
-      // 32-bit absolute prefix + opcode + 32-bit immediate
-      emitByte(ABS32_PREFIX, CB);
-      emitByte(Opcode, CB);
-      if (MI.getNumOperands() > 0) {
-        const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
-        if (MO.isImm()) {
-          emitLE32(static_cast<uint32_t>(MO.getImm()), CB);
-        } else if (MO.isExpr()) {
-          Fixups.push_back(MCFixup::create(2, MO.getExpr(),
-                                           MCFixupKind(FK_Data_4)));
-          emitLE32(0, CB);
-        } else {
-          emitLE32(0, CB);
-        }
-      } else {
-        emitLE32(0, CB);
-      }
-    }
-    break;
-  }
-    
-  case 6: {
-    // 32-bit absolute prefix + opcode + 32-bit address
-    emitByte(ABS32_PREFIX, CB);
     emitByte(Opcode, CB);
     if (MI.getNumOperands() > 0) {
       const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
-      if (MO.isImm()) {
-        emitLE32(static_cast<uint32_t>(MO.getImm()), CB);
-      } else if (MO.isExpr()) {
-        Fixups.push_back(MCFixup::create(2, MO.getExpr(),
-                                         MCFixupKind(FK_Data_4)));
-        emitLE32(0, CB);
-      } else {
-        emitLE32(0, CB);
-      }
+      emitImm32(MO, 1);
     } else {
       emitLE32(0, CB);
     }
     break;
   }
-    
   default:
-    // Unknown size - emit NOPs
-    for (unsigned i = 0; i < Size; ++i) {
+    for (unsigned i = 0; i < Size; ++i)
       emitByte(0xEA, CB);
-    }
     break;
   }
 }

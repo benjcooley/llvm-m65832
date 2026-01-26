@@ -112,17 +112,17 @@ class F7_Imm8<bits<8> ext_opcode, dag outs, dag ins, string asmstr, list<dag> pa
   let Opcode = ext_opcode;
 }
 
-// F8: WID + Immediate 32-bit ($42 prefix, 5 bytes total)
+// F8: Immediate 32-bit (5 bytes total)
 class F8<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
   let Size = 5;
   let Opcode = opcode;
 }
 
-// F9: WID + Absolute 32-bit ($42 prefix, 6 bytes total)
+// F9: Absolute 16-bit (3 bytes total)
 class F9<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
-  let Size = 6;
+  let Size = 3;
   let Opcode = opcode;
 }
 
@@ -130,30 +130,30 @@ class F9<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
 // Extended Instruction Formats ($02 prefix)
 //===----------------------------------------------------------------------===//
 
-// FE8: Register-targeted ALU ($02 $E8 op|mode dest src)
-// Size varies: 4-8 bytes depending on source addressing mode
+// FE8: Extended ALU ($02 $80-$97 [mode] [dest] [src...])
+// Size varies: 4-8 bytes depending on addressing mode
 class FE8_DP<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
-  let Size = 5;  // $02 $E8 op|mode dest src_dp
+  let Size = 5;  // $02 $op mode dest src_dp
   let Opcode = opmode;
 }
 
 class FE8_IMM<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
-  let Size = 8;  // $02 $E8 op|mode dest imm32
+  let Size = 8;  // $02 $op mode dest imm32
   let Opcode = opmode;
 }
 
-// FE9: Barrel shifter ($02 $E9 op|cnt dest src)
+// FE9: Barrel shifter ($02 $98 op|cnt dest src)
 class FE9<bits<8> opcnt, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
-  let Size = 5;  // $02 $E9 op|cnt dest src
+  let Size = 5;  // $02 $98 op|cnt dest src
   let Opcode = opcnt;
 }
 
-// FEA: Extend operations ($02 $EA subop dest src)
+// FEA: Extend operations ($02 $99 subop dest src)
 class FEA<bits<8> subop, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
-  let Size = 5;  // $02 $EA subop dest src
+  let Size = 5;  // $02 $99 subop dest src
   let Opcode = subop;
 }

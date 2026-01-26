@@ -18,6 +18,7 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
+#include <algorithm>
 
 using namespace llvm;
 
@@ -26,6 +27,27 @@ using namespace llvm;
 // Include the auto-generated portion of the assembly writer.
 #define PRINT_ALIAS_INSTR
 #include "M65832GenAsmWriter.inc"
+
+static unsigned getHexWidth(uint64_t Value) {
+  if (Value <= 0xFF)
+    return 2;
+  if (Value <= 0xFFFF)
+    return 4;
+  if (Value <= 0xFFFFFF)
+    return 6;
+  return 8;
+}
+
+static void printHexImm(raw_ostream &O, int64_t Imm,
+                        unsigned MinWidth = 0) {
+  if (Imm < 0) {
+    O << '-';
+    Imm = -Imm;
+  }
+  uint64_t Val = static_cast<uint64_t>(Imm);
+  unsigned Width = std::max(MinWidth, getHexWidth(Val));
+  O << '$' << format_hex_no_prefix(Val, Width);
+}
 
 void M65832InstPrinter::printRegName(raw_ostream &O, MCRegister Reg) {
   O << getRegisterName(Reg);
@@ -46,7 +68,7 @@ void M65832InstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
     printRegName(O, Op.getReg());
   } else if (Op.isImm()) {
     // Print immediate value (# prefix is in assembly string if needed)
-    O << Op.getImm();
+    printHexImm(O, Op.getImm());
   } else if (Op.isExpr()) {
     MAI.printExpr(O, *Op.getExpr());
   } else {
@@ -115,7 +137,14 @@ void M65832InstPrinter::printMemOperand(const MCInst *MI, unsigned OpNo,
   }
   
   if (Offset.isImm() && Offset.getImm() != 0) {
-    O << '+' << Offset.getImm();
+    int64_t Imm = Offset.getImm();
+    if (Imm < 0) {
+      O << '-';
+      printHexImm(O, -Imm);
+    } else {
+      O << '+';
+      printHexImm(O, Imm);
+    }
   }
 }
 
@@ -123,7 +152,7 @@ void M65832InstPrinter::printBranchTarget(const MCInst *MI, unsigned OpNo,
                                             raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isImm()) {
-    O << Op.getImm();
+    printHexImm(O, Op.getImm());
   } else if (Op.isExpr()) {
     MAI.printExpr(O, *Op.getExpr());
   }

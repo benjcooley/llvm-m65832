@@ -43,18 +43,9 @@ void M65832InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   
   if (M65832::GPRRegClass.contains(DestReg) &&
       M65832::GPRRegClass.contains(SrcReg)) {
-    // Calculate DP offsets
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
-    unsigned DstDP = getDPOffset(DestReg - M65832::R0);
-    
-    // LDA src
-    BuildMI(MBB, I, DL, get(M65832::LDA_DP), M65832::A)
-        .addImm(SrcDP);
-    
-    // STA dst
-    BuildMI(MBB, I, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, getKillRegState(true))
-        .addImm(DstDP);
+    // Register-to-register move via Extended ALU (LD.L)
+    BuildMI(MBB, I, DL, get(M65832::MOVR_DP), DestReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
     return;
   }
   
@@ -309,30 +300,20 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     return false;
 
   case M65832::LI: {
-    // Load immediate: LDA #imm; STA $dp
+    // Load immediate: LD.L $dst,#imm
     Register DstReg = MI.getOperand(0).getReg();
     int64_t Imm = MI.getOperand(1).getImm();
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_IMM), M65832::A).addImm(Imm);
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
+    BuildMI(MBB, MI, DL, get(M65832::LDR_IMM), DstReg).addImm(Imm);
     break;
   }
 
   case M65832::LA:
   case M65832::LA_EXT:
   case M65832::LA_BA: {
-    // Load address: LDA #addr; STA $dp
+    // Load address: LD.L $dst,#addr
     Register DstReg = MI.getOperand(0).getReg();
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_IMM), M65832::A)
+    BuildMI(MBB, MI, DL, get(M65832::LDR_IMM), DstReg)
         .add(MI.getOperand(1)); // Copy address operand
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
     break;
   }
 

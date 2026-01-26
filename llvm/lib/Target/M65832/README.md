@@ -67,26 +67,27 @@ The M65832 has a 64-register window (R0-R63) accessed via Direct Page addressing
 
 ### Extended Instructions
 
-The backend uses M65832 extended instructions ($02 prefix):
+The backend uses M65832 extended instructions ($02 prefix) with explicit size:
 
-**Register-Targeted ALU ($02 $E8):**
+**Extended ALU ($02 $80-$97):**
 ```asm
-ADD  R0,R1       ; R0 = R0 + R1
-SUB  R0,##42     ; R0 = R0 - 42
-LD   R0,##1234   ; R0 = 1234
+ADC.L R0,R1          ; R0 = R0 + R1 + C (32-bit)
+SBC.W R0,#$0042      ; R0 = R0 - 0x42 (16-bit)
+LD.B  R0,R1          ; R0 = R1 (8-bit)
+LD.L  R0,#$00001234  ; R0 = 0x1234 (32-bit)
 ```
 
-**Barrel Shifter ($02 $E9):**
+**Barrel Shifter ($02 $98):**
 ```asm
-SHL  R0,R1,##3   ; R0 = R1 << 3
-SHR  R0,R0,##1   ; R0 = R0 >> 1 (logical)
-SAR  R0,R0,##4   ; R0 = R0 >> 4 (arithmetic)
+SHL  R0,R1,#$03   ; R0 = R1 << 3
+SHR  R0,R0,#$01   ; R0 = R0 >> 1 (logical)
+SAR  R0,R0,#$04   ; R0 = R0 >> 4 (arithmetic)
 ```
 
-**Extend Operations ($02 $EA):**
+**Extend Operations ($02 $99):**
 ```asm
-SEXT8  R0,R1     ; R0 = sign_extend_8(R1)
-CLZ    R0,R1     ; R0 = count_leading_zeros(R1)
+SEXT8  R0,R1      ; R0 = sign_extend_8(R1)
+CLZ    R0,R1      ; R0 = count_leading_zeros(R1)
 ```
 
 ### Assembly Syntax
@@ -95,14 +96,18 @@ Traditional 6502/65816 mnemonics use uppercase concatenated form:
 ```asm
 LDA  $00         ; Load accumulator from DP
 STA  $04         ; Store accumulator to DP
-ADC  #$42        ; Add with carry immediate
+ADC  #$00000042  ; Add with carry immediate (32-bit default)
 ```
 
-New extended instructions use register notation:
+Extended ALU instructions use register notation and explicit sizes:
 ```asm
-ADD  R0,R1       ; Add registers
-LD   R0,##1234   ; Load immediate (## = 32-bit)
-SHL  R0,R0,##3   ; Shift left by constant
+ADC.L R0,R1          ; Add registers (32-bit)
+LD.W  R0,#$1234      ; Load 16-bit immediate
+LD.B  R0,R1          ; Load 8-bit register
+SHL   R0,R0,#$03     ; Shift left by constant
+
+LDA  B+$1234         ; Bank-relative 16-bit address
+LD.L R0,$A0001234    ; 32-bit absolute (extended ALU)
 ```
 
 ## File Structure
