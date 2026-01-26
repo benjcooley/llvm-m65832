@@ -4,12 +4,14 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 
 ## Status
 
-**Current Phase: Working but sub-optimal compiler (Phase A)**
+**Current Phase: Working C/C++ compiler (Phase A)**
 
 ### Working Features
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| **Clang C compiler** | ✅ | `clang -target m65832-unknown-elf` |
+| **Clang C++ compiler** | ✅ | `clang++ -target m65832-unknown-elf -fno-exceptions` |
 | Basic arithmetic (ADD, SUB) | ✅ | Uses extended register-targeted ALU |
 | Logical ops (AND, OR, XOR) | ✅ | Extended instructions |
 | Shifts (SHL, SHR, SAR) | ✅ | Hardware barrel shifter |
@@ -21,6 +23,7 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 | Global variables | ✅ | Load/store |
 | Conditional branches | ✅ | BEQ, BNE, BMI, BPL, etc. |
 | ELF object output | ✅ | EM_M65832 = 0x6583 |
+| DWARF debug info | ✅ | CFI directives supported |
 
 ### Known Limitations
 
@@ -28,21 +31,24 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 - Some condition codes (GT, LE) use approximations
 - Comparison falls back to LDA/CMP instead of CMPR_DP
 - No hardware multiply/divide (uses libcalls)
+- C++ exceptions not yet supported
 
 ## Building
 
 ```bash
-# Configure (from llvm-project root)
-cmake -G Ninja -S llvm -B build \
+# Configure with Clang (from llvm-project root)
+cmake -S llvm -B build \
   -DLLVM_TARGETS_TO_BUILD="M65832" \
+  -DLLVM_ENABLE_PROJECTS="clang" \
   -DCMAKE_BUILD_TYPE=Release
 
-# Build llc
-ninja -C build llc
+# Build clang and llc
+make -C build -j$(nproc) clang llc
 
-# Test
-echo 'define i32 @add(i32 %a, i32 %b) { %r = add i32 %a, %b ret i32 %r }' | \
-  build/bin/llc -march=m65832 -o -
+# Test C compilation
+echo 'int add(int a, int b) { return a + b; }' > /tmp/test.c
+build/bin/clang -target m65832-unknown-elf -S -O2 -o /tmp/test.s /tmp/test.c
+cat /tmp/test.s
 ```
 
 ## Architecture Overview
@@ -141,8 +147,8 @@ M65832/
 The M65832 emulator is in the sibling `m65832` repo:
 
 ```bash
-# Compile LLVM IR to assembly
-llc -march=m65832 test.ll -o test.s
+# Compile C to assembly
+clang -target m65832-unknown-elf -S -O2 -o test.s test.c
 
 # Assemble (using m65832 assembler)
 ../m65832/as/m65832as test.s -o test.bin
@@ -151,12 +157,36 @@ llc -march=m65832 test.ll -o test.s
 ../m65832/emu/m65832emu test.bin
 ```
 
+## Clang Target Support
+
+The M65832 target is fully integrated into Clang:
+
+```bash
+# C compilation
+clang -target m65832-unknown-elf -S -O2 -o output.s input.c
+
+# C++ compilation (no exceptions)
+clang++ -target m65832-unknown-elf -S -O2 -fno-exceptions -o output.s input.cpp
+
+# Full pipeline to binary
+clang -target m65832-unknown-elf -S -O2 -o output.s input.c
+m65832as output.s -o output.bin
+```
+
+### Target-Specific Macros
+
+When compiling for M65832, these macros are defined:
+- `__m65832__`
+- `__M65832__`
+- `M65832`
+- `__LITTLE_ENDIAN__`
+
 ## Next Steps
 
-1. **Build clang** - Enable `clang -target m65832`
-2. **Linker support** - Configure lld or external linker
-3. **C runtime** - crt0.s, libcalls for mul/div
-4. **Libc port** - Picolibc or newlib
+1. **Linker support** - Configure lld or external linker
+2. **C runtime** - crt0.s, libcalls for mul/div
+3. **Libc port** - Picolibc or newlib
+4. **Exception handling** - C++ exception support
 
 ## License
 

@@ -37,10 +37,11 @@ static Reloc::Model getEffectiveRelocModel(std::optional<Reloc::Model> RM) {
 // e = little endian
 // m:e = ELF mangling
 // p:32:32 = 32-bit pointers, 32-bit aligned
-// i8:8, i16:16, i32:32 = natural alignment
+// i8:8, i16:16, i32:32, i64:64 = natural alignment
+// f32:32, f64:64 = floating point alignment
 // n32 = native 32-bit integers
 // S32 = 32-bit stack alignment
-static const char *M65832DataLayout = "e-m:e-p:32:32-i8:8-i16:16-i32:32-n32-S32";
+static const char *M65832DataLayout = "e-m:e-p:32:32-i8:8-i16:16-i32:32-i64:64-f32:32-f64:64-n32-S32";
 
 M65832TargetMachine::M65832TargetMachine(const Target &T, const Triple &TT,
                                            StringRef CPU, StringRef FS,

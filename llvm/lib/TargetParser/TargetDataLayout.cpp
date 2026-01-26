@@ -575,6 +575,8 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
   case Triple::loongarch32:
   case Triple::loongarch64:
     return computeLoongArchDataLayout(*this);
+  case Triple::m65832:
+    return "e-m:e-p:32:32-i8:8-i16:16-i32:32-i64:64-f32:32-f64:64-n32-S32";
   case Triple::m68k:
     return computeM68kDataLayout(*this);
   case Triple::mips:

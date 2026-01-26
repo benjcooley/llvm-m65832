@@ -38,12 +38,13 @@ M65832MCAsmInfo::M65832MCAsmInfo(const Triple &TT) {
   PrivateGlobalPrefix = ".L";
   PrivateLabelPrefix = ".L";
   
-  // Alignment
-  AlignmentIsInBytes = true;
+  // Alignment - use power-of-2 (.p2align) since m65832as supports it
+  AlignmentIsInBytes = false;
   
-  // DWARF
+  // DWARF debug information
   SupportsDebugInformation = true;
-  ExceptionsType = ExceptionHandling::None;  // Match Triple default
+  // ExceptionsType defaults to None to match Triple
+  // Use DwarfCFI for unwind info when needed
   DwarfRegNumForCFI = true;
   
   // Code pointer size
