@@ -45,84 +45,84 @@ class M65832Reg<bits<7> Enc, string n, list<string> alt = []> : Register<n> {
 //===----------------------------------------------------------------------===//
 
 // Arguments / Return values (caller-saved)
-def R0  : M65832Reg<0,  "r0">,  DwarfRegNum<[0]>;
-def R1  : M65832Reg<1,  "r1">,  DwarfRegNum<[1]>;
-def R2  : M65832Reg<2,  "r2">,  DwarfRegNum<[2]>;
-def R3  : M65832Reg<3,  "r3">,  DwarfRegNum<[3]>;
-def R4  : M65832Reg<4,  "r4">,  DwarfRegNum<[4]>;
-def R5  : M65832Reg<5,  "r5">,  DwarfRegNum<[5]>;
-def R6  : M65832Reg<6,  "r6">,  DwarfRegNum<[6]>;
-def R7  : M65832Reg<7,  "r7">,  DwarfRegNum<[7]>;
+def R0  : M65832Reg<0,  "R0">,  DwarfRegNum<[0]>;
+def R1  : M65832Reg<1,  "R1">,  DwarfRegNum<[1]>;
+def R2  : M65832Reg<2,  "R2">,  DwarfRegNum<[2]>;
+def R3  : M65832Reg<3,  "R3">,  DwarfRegNum<[3]>;
+def R4  : M65832Reg<4,  "R4">,  DwarfRegNum<[4]>;
+def R5  : M65832Reg<5,  "R5">,  DwarfRegNum<[5]>;
+def R6  : M65832Reg<6,  "R6">,  DwarfRegNum<[6]>;
+def R7  : M65832Reg<7,  "R7">,  DwarfRegNum<[7]>;
 
 // Temporaries (caller-saved)
-def R8  : M65832Reg<8,  "r8">,  DwarfRegNum<[8]>;
-def R9  : M65832Reg<9,  "r9">,  DwarfRegNum<[9]>;
-def R10 : M65832Reg<10, "r10">, DwarfRegNum<[10]>;
-def R11 : M65832Reg<11, "r11">, DwarfRegNum<[11]>;
-def R12 : M65832Reg<12, "r12">, DwarfRegNum<[12]>;
-def R13 : M65832Reg<13, "r13">, DwarfRegNum<[13]>;
-def R14 : M65832Reg<14, "r14">, DwarfRegNum<[14]>;
-def R15 : M65832Reg<15, "r15">, DwarfRegNum<[15]>;
+def R8  : M65832Reg<8,  "R8">,  DwarfRegNum<[8]>;
+def R9  : M65832Reg<9,  "R9">,  DwarfRegNum<[9]>;
+def R10 : M65832Reg<10, "R10">, DwarfRegNum<[10]>;
+def R11 : M65832Reg<11, "R11">, DwarfRegNum<[11]>;
+def R12 : M65832Reg<12, "R12">, DwarfRegNum<[12]>;
+def R13 : M65832Reg<13, "R13">, DwarfRegNum<[13]>;
+def R14 : M65832Reg<14, "R14">, DwarfRegNum<[14]>;
+def R15 : M65832Reg<15, "R15">, DwarfRegNum<[15]>;
 
 // Preserved (callee-saved)
-def R16 : M65832Reg<16, "r16">, DwarfRegNum<[16]>;
-def R17 : M65832Reg<17, "r17">, DwarfRegNum<[17]>;
-def R18 : M65832Reg<18, "r18">, DwarfRegNum<[18]>;
-def R19 : M65832Reg<19, "r19">, DwarfRegNum<[19]>;
-def R20 : M65832Reg<20, "r20">, DwarfRegNum<[20]>;
-def R21 : M65832Reg<21, "r21">, DwarfRegNum<[21]>;
-def R22 : M65832Reg<22, "r22">, DwarfRegNum<[22]>;
-def R23 : M65832Reg<23, "r23">, DwarfRegNum<[23]>;
+def R16 : M65832Reg<16, "R16">, DwarfRegNum<[16]>;
+def R17 : M65832Reg<17, "R17">, DwarfRegNum<[17]>;
+def R18 : M65832Reg<18, "R18">, DwarfRegNum<[18]>;
+def R19 : M65832Reg<19, "R19">, DwarfRegNum<[19]>;
+def R20 : M65832Reg<20, "R20">, DwarfRegNum<[20]>;
+def R21 : M65832Reg<21, "R21">, DwarfRegNum<[21]>;
+def R22 : M65832Reg<22, "R22">, DwarfRegNum<[22]>;
+def R23 : M65832Reg<23, "R23">, DwarfRegNum<[23]>;
 
 // Kernel reserved
-def R24 : M65832Reg<24, "r24">, DwarfRegNum<[24]>;
-def R25 : M65832Reg<25, "r25">, DwarfRegNum<[25]>;
-def R26 : M65832Reg<26, "r26">, DwarfRegNum<[26]>;
-def R27 : M65832Reg<27, "r27">, DwarfRegNum<[27]>;
+def R24 : M65832Reg<24, "R24">, DwarfRegNum<[24]>;
+def R25 : M65832Reg<25, "R25">, DwarfRegNum<[25]>;
+def R26 : M65832Reg<26, "R26">, DwarfRegNum<[26]>;
+def R27 : M65832Reg<27, "R27">, DwarfRegNum<[27]>;
 
 // Special purpose
-def R28 : M65832Reg<28, "r28", ["gp"]>, DwarfRegNum<[28]>;  // Global pointer
-def R29 : M65832Reg<29, "r29", ["fp"]>, DwarfRegNum<[29]>;  // Frame pointer
-def R30 : M65832Reg<30, "r30", ["lr"]>, DwarfRegNum<[30]>;  // Link register
-def R31 : M65832Reg<31, "r31">, DwarfRegNum<[31]>;          // Reserved
+def R28 : M65832Reg<28, "R28", ["gp"]>, DwarfRegNum<[28]>;  // Global pointer
+def R29 : M65832Reg<29, "R29", ["fp"]>, DwarfRegNum<[29]>;  // Frame pointer
+def R30 : M65832Reg<30, "R30", ["lr"]>, DwarfRegNum<[30]>;  // Link register
+def R31 : M65832Reg<31, "R31">, DwarfRegNum<[31]>;          // Reserved
 
 // Additional temporaries (caller-saved)
-def R32 : M65832Reg<32, "r32">, DwarfRegNum<[32]>;
-def R33 : M65832Reg<33, "r33">, DwarfRegNum<[33]>;
-def R34 : M65832Reg<34, "r34">, DwarfRegNum<[34]>;
-def R35 : M65832Reg<35, "r35">, DwarfRegNum<[35]>;
-def R36 : M65832Reg<36, "r36">, DwarfRegNum<[36]>;
-def R37 : M65832Reg<37, "r37">, DwarfRegNum<[37]>;
-def R38 : M65832Reg<38, "r38">, DwarfRegNum<[38]>;
-def R39 : M65832Reg<39, "r39">, DwarfRegNum<[39]>;
-def R40 : M65832Reg<40, "r40">, DwarfRegNum<[40]>;
-def R41 : M65832Reg<41, "r41">, DwarfRegNum<[41]>;
-def R42 : M65832Reg<42, "r42">, DwarfRegNum<[42]>;
-def R43 : M65832Reg<43, "r43">, DwarfRegNum<[43]>;
-def R44 : M65832Reg<44, "r44">, DwarfRegNum<[44]>;
-def R45 : M65832Reg<45, "r45">, DwarfRegNum<[45]>;
-def R46 : M65832Reg<46, "r46">, DwarfRegNum<[46]>;
-def R47 : M65832Reg<47, "r47">, DwarfRegNum<[47]>;
+def R32 : M65832Reg<32, "R32">, DwarfRegNum<[32]>;
+def R33 : M65832Reg<33, "R33">, DwarfRegNum<[33]>;
+def R34 : M65832Reg<34, "R34">, DwarfRegNum<[34]>;
+def R35 : M65832Reg<35, "R35">, DwarfRegNum<[35]>;
+def R36 : M65832Reg<36, "R36">, DwarfRegNum<[36]>;
+def R37 : M65832Reg<37, "R37">, DwarfRegNum<[37]>;
+def R38 : M65832Reg<38, "R38">, DwarfRegNum<[38]>;
+def R39 : M65832Reg<39, "R39">, DwarfRegNum<[39]>;
+def R40 : M65832Reg<40, "R40">, DwarfRegNum<[40]>;
+def R41 : M65832Reg<41, "R41">, DwarfRegNum<[41]>;
+def R42 : M65832Reg<42, "R42">, DwarfRegNum<[42]>;
+def R43 : M65832Reg<43, "R43">, DwarfRegNum<[43]>;
+def R44 : M65832Reg<44, "R44">, DwarfRegNum<[44]>;
+def R45 : M65832Reg<45, "R45">, DwarfRegNum<[45]>;
+def R46 : M65832Reg<46, "R46">, DwarfRegNum<[46]>;
+def R47 : M65832Reg<47, "R47">, DwarfRegNum<[47]>;
 
 // Additional preserved (callee-saved)
-def R48 : M65832Reg<48, "r48">, DwarfRegNum<[48]>;
-def R49 : M65832Reg<49, "r49">, DwarfRegNum<[49]>;
-def R50 : M65832Reg<50, "r50">, DwarfRegNum<[50]>;
-def R51 : M65832Reg<51, "r51">, DwarfRegNum<[51]>;
-def R52 : M65832Reg<52, "r52">, DwarfRegNum<[52]>;
-def R53 : M65832Reg<53, "r53">, DwarfRegNum<[53]>;
-def R54 : M65832Reg<54, "r54">, DwarfRegNum<[54]>;
-def R55 : M65832Reg<55, "r55">, DwarfRegNum<[55]>;
+def R48 : M65832Reg<48, "R48">, DwarfRegNum<[48]>;
+def R49 : M65832Reg<49, "R49">, DwarfRegNum<[49]>;
+def R50 : M65832Reg<50, "R50">, DwarfRegNum<[50]>;
+def R51 : M65832Reg<51, "R51">, DwarfRegNum<[51]>;
+def R52 : M65832Reg<52, "R52">, DwarfRegNum<[52]>;
+def R53 : M65832Reg<53, "R53">, DwarfRegNum<[53]>;
+def R54 : M65832Reg<54, "R54">, DwarfRegNum<[54]>;
+def R55 : M65832Reg<55, "R55">, DwarfRegNum<[55]>;
 
 // Reserved for future/FP/TLS
-def R56 : M65832Reg<56, "r56">, DwarfRegNum<[56]>;
-def R57 : M65832Reg<57, "r57">, DwarfRegNum<[57]>;
-def R58 : M65832Reg<58, "r58">, DwarfRegNum<[58]>;
-def R59 : M65832Reg<59, "r59">, DwarfRegNum<[59]>;
-def R60 : M65832Reg<60, "r60">, DwarfRegNum<[60]>;
-def R61 : M65832Reg<61, "r61">, DwarfRegNum<[61]>;
-def R62 : M65832Reg<62, "r62">, DwarfRegNum<[62]>;
-def R63 : M65832Reg<63, "r63">, DwarfRegNum<[63]>;
+def R56 : M65832Reg<56, "R56">, DwarfRegNum<[56]>;
+def R57 : M65832Reg<57, "R57">, DwarfRegNum<[57]>;
+def R58 : M65832Reg<58, "R58">, DwarfRegNum<[58]>;
+def R59 : M65832Reg<59, "R59">, DwarfRegNum<[59]>;
+def R60 : M65832Reg<60, "R60">, DwarfRegNum<[60]>;
+def R61 : M65832Reg<61, "R61">, DwarfRegNum<[61]>;
+def R62 : M65832Reg<62, "R62">, DwarfRegNum<[62]>;
+def R63 : M65832Reg<63, "R63">, DwarfRegNum<[63]>;
 
 //===----------------------------------------------------------------------===//
 // Architectural Registers

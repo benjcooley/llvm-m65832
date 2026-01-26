@@ -45,7 +45,8 @@ void M65832InstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   if (Op.isReg()) {
     printRegName(O, Op.getReg());
   } else if (Op.isImm()) {
-    O << '#' << Op.getImm();
+    // Print immediate value (# prefix is in assembly string if needed)
+    O << Op.getImm();
   } else if (Op.isExpr()) {
     MAI.printExpr(O, *Op.getExpr());
   } else {
@@ -53,16 +54,50 @@ void M65832InstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   }
 }
 
+void M65832InstPrinter::printAbsAddr(const MCInst *MI, unsigned OpNo,
+                                       raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isImm()) {
+    // 32-bit absolute address - print as $XXXXXXXX
+    O << '$' << format_hex_no_prefix(Op.getImm() & 0xFFFFFFFF, 8);
+  } else if (Op.isExpr()) {
+    MAI.printExpr(O, *Op.getExpr());
+  }
+}
+
+void M65832InstPrinter::printBankRelAddr(const MCInst *MI, unsigned OpNo,
+                                           raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isImm()) {
+    // Bank-relative address - print as B+$XXXX
+    O << "B+$" << format_hex_no_prefix(Op.getImm() & 0xFFFF, 4);
+  } else if (Op.isExpr()) {
+    O << "B+";
+    MAI.printExpr(O, *Op.getExpr());
+  }
+}
+
 void M65832InstPrinter::printDPOperand(const MCInst *MI, unsigned OpNo,
                                          raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isImm()) {
-    // Direct Page address - print as hex byte
-    O << '$' << format_hex_no_prefix(Op.getImm() & 0xFF, 2);
+    // Direct Page address - check if it maps to a register (R0-R63)
+    int64_t Addr = Op.getImm() & 0xFF;
+    if ((Addr & 0x3) == 0 && Addr < 256) {
+      // Aligned to 4 bytes, likely a register - print as Rn
+      unsigned RegNum = Addr / 4;
+      if (RegNum < 64) {
+        O << 'R' << RegNum;
+        return;
+      }
+    }
+    // Not a register, print as hex
+    O << '$' << format_hex_no_prefix(Addr, 2);
   } else if (Op.isReg()) {
-    // Register number * 4 for DP offset
+    // Already a register - print as Rn
     unsigned RegNo = Op.getReg();
-    O << '$' << format_hex_no_prefix((RegNo & 0x3F) * 4, 2);
+    // Assuming registers are M65832::R0, R1, etc.
+    O << getRegisterName(RegNo);
   } else if (Op.isExpr()) {
     MAI.printExpr(O, *Op.getExpr());
   }

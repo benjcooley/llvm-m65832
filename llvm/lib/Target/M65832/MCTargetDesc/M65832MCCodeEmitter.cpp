@@ -11,10 +11,20 @@
 // M65832 instruction encoding:
 // - Implied (1 byte): opcode
 // - Direct Page (2 bytes): opcode + dp_addr
-// - Absolute 16 (3 bytes): opcode + addr_lo + addr_hi
+// - Bank-relative 16 (3 bytes): opcode + addr_lo + addr_hi (B+$xxxx)
 // - Relative 8 (2 bytes): opcode + offset
-// - WID + Imm32 (5 bytes): 0x42 + opcode + imm[0:31]
-// - WID + Abs32 (6 bytes): 0x42 + opcode + addr[0:31]
+// - Abs32 (6 bytes): 0x42 + opcode + addr[0:31] ($xxxxxxxx)
+// - Imm32 (5 bytes): opcode + imm[0:31] (default 32-bit mode)
+//
+// Prefix bytes:
+// - $42 = 32-bit absolute addressing mode
+// - $CB = byte data size (.B)
+// - $DB = word data size (.W)
+// - (no prefix) = long data size (.L) - 32-bit default
+//
+// Special encodings:
+// - $42 $CB = WAI (Wait for Interrupt)
+// - $42 $DB = STP (Stop)
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,8 +45,17 @@ using namespace llvm;
 
 #define DEBUG_TYPE "mccodeemitter"
 
-// WID prefix for 32-bit operations
-static const uint8_t WID_PREFIX = 0x42;
+// Prefix bytes for M65832 encoding
+// Valid ordering: DATA prefix first, then ADDRESS prefix
+// Invalid ordering (addr before data) is repurposed for WAI/STP
+static const uint8_t ABS32_PREFIX = 0x42;  // 32-bit absolute addressing prefix
+static const uint8_t BYTE_PREFIX = 0xCB;   // Byte data size prefix (.B)
+static const uint8_t WORD_PREFIX = 0xDB;   // Word data size prefix (.W)
+// No data prefix = Long data size (.L) - 32-bit default
+//
+// Special encodings (invalid prefix sequences repurposed):
+// $42 $CB = WAI (Wait for Interrupt)
+// $42 $DB = STP (Stop Processor)
 
 namespace {
 class M65832MCCodeEmitter : public MCCodeEmitter {
@@ -368,8 +387,8 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
         }
       }
     } else {
-      // Standard WID prefix + opcode + 32-bit immediate
-      emitByte(WID_PREFIX, CB);
+      // 32-bit absolute prefix + opcode + 32-bit immediate
+      emitByte(ABS32_PREFIX, CB);
       emitByte(Opcode, CB);
       if (MI.getNumOperands() > 0) {
         const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
@@ -390,8 +409,8 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   }
     
   case 6: {
-    // WID prefix + opcode + 32-bit address
-    emitByte(WID_PREFIX, CB);
+    // 32-bit absolute prefix + opcode + 32-bit address
+    emitByte(ABS32_PREFIX, CB);
     emitByte(Opcode, CB);
     if (MI.getNumOperands() > 0) {
       const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
