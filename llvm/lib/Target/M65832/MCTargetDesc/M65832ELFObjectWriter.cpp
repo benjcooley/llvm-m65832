@@ -19,28 +19,12 @@
 
 using namespace llvm;
 
-// M65832 ELF machine type: 0x6583
-// Note: This is a custom value not in the official ELF spec
-#define EM_M65832 0x6583
-
-// M65832-specific relocation types
-// These follow the ELF relocation type numbering convention
-enum {
-  R_M65832_NONE = 0,
-  R_M65832_8 = 1,        // 8-bit absolute
-  R_M65832_16 = 2,       // 16-bit absolute
-  R_M65832_24 = 3,       // 24-bit absolute (bank + address)
-  R_M65832_32 = 4,       // 32-bit absolute
-  R_M65832_PCREL_8 = 5,  // 8-bit PC-relative
-  R_M65832_PCREL_16 = 6, // 16-bit PC-relative
-};
-
 namespace {
 class M65832ELFObjectWriter : public MCELFObjectTargetWriter {
 public:
   M65832ELFObjectWriter(uint8_t OSABI)
       : MCELFObjectTargetWriter(/*Is64Bit=*/false, OSABI,
-                                EM_M65832,
+                                ELF::EM_M65832,
                                 /*HasRelocationAddend=*/true) {}
 
   unsigned getRelocType(const MCFixup &Fixup, const MCValue &Target,
@@ -59,10 +43,10 @@ unsigned M65832ELFObjectWriter::getRelocType(const MCFixup &Fixup,
       llvm_unreachable("Unsupported PC-relative relocation type");
     case FK_Data_1:
     case M65832::fixup_m65832_pcrel_8:
-      return R_M65832_PCREL_8;
+      return ELF::R_M65832_PCREL_8;
     case FK_Data_2:
     case M65832::fixup_m65832_pcrel_16:
-      return R_M65832_PCREL_16;
+      return ELF::R_M65832_PCREL_16;
     }
   }
 
@@ -71,15 +55,15 @@ unsigned M65832ELFObjectWriter::getRelocType(const MCFixup &Fixup,
     llvm_unreachable("Unsupported relocation type");
   case FK_Data_1:
   case M65832::fixup_m65832_8:
-    return R_M65832_8;
+    return ELF::R_M65832_8;
   case FK_Data_2:
   case M65832::fixup_m65832_16:
-    return R_M65832_16;
+    return ELF::R_M65832_16;
   case M65832::fixup_m65832_24:
-    return R_M65832_24;
+    return ELF::R_M65832_24;
   case FK_Data_4:
   case M65832::fixup_m65832_32:
-    return R_M65832_32;
+    return ELF::R_M65832_32;
   }
 }
 

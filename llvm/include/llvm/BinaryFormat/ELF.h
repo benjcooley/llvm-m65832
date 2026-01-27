@@ -325,6 +325,7 @@ enum {
   EM_VE = 251,            // NEC SX-Aurora VE
   EM_CSKY = 252,          // C-SKY 32-bit processor
   EM_LOONGARCH = 258,     // LoongArch
+  EM_M65832 = 0x6583,     // M65832 32-bit 6502 extension
 };
 
 // Object file classes.
@@ -1027,6 +1028,11 @@ enum : unsigned {
 // ELF Relocation types for MSP430
 enum {
 #include "ELFRelocs/MSP430.def"
+};
+
+// ELF Relocation types for M65832
+enum {
+#include "ELFRelocs/M65832.def"
 };
 
 // ELF Relocation type for VE.
