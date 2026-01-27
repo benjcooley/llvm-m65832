@@ -86,39 +86,59 @@ def M65832selectccfp : SDNode<"M65832ISD::SELECT_CC_FP", SDT_M65832SelectCCFP, [
 // Operand Definitions
 //===----------------------------------------------------------------------===//
 
+// AsmOperandClass for memory/address operands - matches what the parser produces
+def M65832MemAsmOperand : AsmOperandClass {
+  let Name = "Mem";
+  let RenderMethod = "addImmOperands";
+}
+
+def M65832ImmAsmOperand : AsmOperandClass {
+  let Name = "M65832Imm";
+  let RenderMethod = "addImmOperands";
+}
+
 // Direct Page operand (register number * 4)
 def DPOp : Operand<i32> {
   let PrintMethod = "printDPOperand";
   let EncoderMethod = "getDPOpValue";
   let DecoderMethod = "decodeDPOperand";
+  let ParserMatchClass = M65832MemAsmOperand;
 }
 
 // Memory operand (for absolute addressing)
 def MemOp : Operand<i32> {
   let PrintMethod = "printMemOperand";
   let MIOperandInfo = (ops GPR, i32imm);
+  let ParserMatchClass = M65832MemAsmOperand;
 }
 
 // Bank-relative absolute address (B+$xxxx)
 def BankRelOp : Operand<i32> {
   let PrintMethod = "printBankRelAddr";
+  let ParserMatchClass = M65832MemAsmOperand;
 }
 
 // Immediate operands
-def imm8  : Operand<i32>, ImmLeaf<i32, [{return isUInt<8>(Imm);}]>;
-def imm16 : Operand<i32>, ImmLeaf<i32, [{return isUInt<16>(Imm);}]>;
+def imm8  : Operand<i32>, ImmLeaf<i32, [{return isUInt<8>(Imm);}]> {
+  let ParserMatchClass = M65832ImmAsmOperand;
+}
+def imm16 : Operand<i32>, ImmLeaf<i32, [{return isUInt<16>(Imm);}]> {
+  let ParserMatchClass = M65832ImmAsmOperand;
+}
 // imm32 is just an alias for i32imm in 32-bit mode
 
 // Branch target
 def brtarget : Operand<OtherVT> {
   let PrintMethod = "printBranchTarget";
   let EncoderMethod = "getBranchTargetOpValue";
+  let ParserMatchClass = M65832MemAsmOperand;
 }
 
 // Call target (for JSR)
 def calltarget : Operand<i32> {
   let PrintMethod = "printBankRelAddr";
   let EncoderMethod = "getCallTargetOpValue";
+  let ParserMatchClass = M65832MemAsmOperand;
 }
 
 // Condition code operand

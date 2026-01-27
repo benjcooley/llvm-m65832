@@ -64,6 +64,7 @@ private:
     bool Indirect;
     bool IndirectLong;
     bool StackRelative;
+    bool BankRelative;  // B+addr syntax
   };
 
   union {
@@ -103,7 +104,7 @@ public:
   // Memory operand
   static std::unique_ptr<M65832Operand>
   createMem(unsigned Base, const MCExpr *Disp, unsigned Index, bool Indirect,
-            bool IndirectLong, bool StackRel, SMLoc S, SMLoc E) {
+            bool IndirectLong, bool StackRel, bool BankRel, SMLoc S, SMLoc E) {
     auto Op = std::make_unique<M65832Operand>(k_Memory, S, E);
     Op->Mem.BaseReg = Base;
     Op->Mem.Disp = Disp;
@@ -111,6 +112,7 @@ public:
     Op->Mem.Indirect = Indirect;
     Op->Mem.IndirectLong = IndirectLong;
     Op->Mem.StackRelative = StackRel;
+    Op->Mem.BankRelative = BankRel;
     return Op;
   }
 
@@ -121,6 +123,9 @@ public:
   bool isImm() const override { return Kind == k_Immediate; }
   bool isReg() const override { return Kind == k_Register; }
   bool isMem() const override { return Kind == k_Memory; }
+
+  // AsmMatcher operand type predicates
+  bool isM65832Imm() const { return Kind == k_Immediate; }
 
   StringRef getToken() const {
     assert(Kind == k_Token && "Not a token");
@@ -163,7 +168,16 @@ public:
 
   void addImmOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::createExpr(getImm()));
+    if (isImm())
+      Inst.addOperand(MCOperand::createExpr(getImm()));
+    else if (isMem())
+      Inst.addOperand(MCOperand::createExpr(Mem.Disp));
+  }
+
+  void addMemOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    // Memory operand - add displacement as expression
+    Inst.addOperand(MCOperand::createExpr(Mem.Disp));
   }
 };
 
@@ -171,7 +185,8 @@ class M65832AsmParser : public MCTargetAsmParser {
   const MCInstrInfo &MII;
 
   unsigned parseRegisterName(StringRef Name);
-  bool parseExpression(const MCExpr *&Res, SMLoc &EndLoc);
+  bool parseHexNumber(int64_t &Value);
+  bool parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc);
 
   ParseStatus parseOperand(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parseImmediate(OperandVector &Operands);
@@ -205,29 +220,30 @@ public:
 } // end anonymous namespace
 
 unsigned M65832AsmParser::parseRegisterName(StringRef Name) {
-  // GPR registers R0-R15
+  // GPR registers R0-R63
   if (Name.size() >= 2 && (Name[0] == 'R' || Name[0] == 'r')) {
     unsigned RegNum;
-    if (!Name.substr(1).getAsInteger(10, RegNum) && RegNum <= 15) {
-      switch (RegNum) {
-      case 0: return M65832::R0;
-      case 1: return M65832::R1;
-      case 2: return M65832::R2;
-      case 3: return M65832::R3;
-      case 4: return M65832::R4;
-      case 5: return M65832::R5;
-      case 6: return M65832::R6;
-      case 7: return M65832::R7;
-      case 8: return M65832::R8;
-      case 9: return M65832::R9;
-      case 10: return M65832::R10;
-      case 11: return M65832::R11;
-      case 12: return M65832::R12;
-      case 13: return M65832::R13;
-      case 14: return M65832::R14;
-      case 15: return M65832::R15;
-      default: return 0;
-      }
+    if (!Name.substr(1).getAsInteger(10, RegNum) && RegNum <= 63) {
+      // Map register number to LLVM register enum
+      static const unsigned GPRRegs[] = {
+        M65832::R0, M65832::R1, M65832::R2, M65832::R3,
+        M65832::R4, M65832::R5, M65832::R6, M65832::R7,
+        M65832::R8, M65832::R9, M65832::R10, M65832::R11,
+        M65832::R12, M65832::R13, M65832::R14, M65832::R15,
+        M65832::R16, M65832::R17, M65832::R18, M65832::R19,
+        M65832::R20, M65832::R21, M65832::R22, M65832::R23,
+        M65832::R24, M65832::R25, M65832::R26, M65832::R27,
+        M65832::R28, M65832::R29, M65832::R30, M65832::R31,
+        M65832::R32, M65832::R33, M65832::R34, M65832::R35,
+        M65832::R36, M65832::R37, M65832::R38, M65832::R39,
+        M65832::R40, M65832::R41, M65832::R42, M65832::R43,
+        M65832::R44, M65832::R45, M65832::R46, M65832::R47,
+        M65832::R48, M65832::R49, M65832::R50, M65832::R51,
+        M65832::R52, M65832::R53, M65832::R54, M65832::R55,
+        M65832::R56, M65832::R57, M65832::R58, M65832::R59,
+        M65832::R60, M65832::R61, M65832::R62, M65832::R63
+      };
+      return GPRRegs[RegNum];
     }
   }
 
@@ -289,7 +305,97 @@ ParseStatus M65832AsmParser::tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
   return ParseStatus::Success;
 }
 
-bool M65832AsmParser::parseExpression(const MCExpr *&Res, SMLoc &EndLoc) {
+// Parse hex number with $ prefix (6502 style) or 0x prefix
+// This is tricky because $01FF gets tokenized as $ + 01 + FF by the lexer
+bool M65832AsmParser::parseHexNumber(int64_t &Value) {
+  const AsmToken &Tok = getParser().getTok();
+  
+  if (Tok.is(AsmToken::Dollar)) {
+    // $hex syntax - consume adjacent tokens that form hex digits
+    SMLoc PrevEnd = Tok.getEndLoc();
+    getParser().Lex(); // Eat '$'
+    
+    std::string HexStr;
+    
+    // Keep consuming tokens that are adjacent and look like hex
+    while (true) {
+      const AsmToken &NextTok = getParser().getTok();
+      
+      // Check if this token is adjacent to the previous one
+      if (NextTok.getLoc().getPointer() != PrevEnd.getPointer())
+        break;
+      
+      StringRef TokStr;
+      
+      if (NextTok.is(AsmToken::Integer)) {
+        TokStr = NextTok.getString();
+      } else if (NextTok.is(AsmToken::Identifier)) {
+        TokStr = NextTok.getString();
+        // Check if it's all hex digits
+        bool AllHex = true;
+        for (char c : TokStr) {
+          if (!isxdigit(c)) {
+            AllHex = false;
+            break;
+          }
+        }
+        if (!AllHex)
+          break;
+      } else {
+        break;
+      }
+      
+      HexStr += TokStr.str();
+      PrevEnd = NextTok.getEndLoc();
+      getParser().Lex();
+    }
+    
+    if (HexStr.empty())
+      return Error(getParser().getTok().getLoc(), "expected hex number after '$'");
+    
+    // Parse as hex
+    if (StringRef(HexStr).getAsInteger(16, Value))
+      return Error(getParser().getTok().getLoc(), "invalid hex number");
+    
+    return false;
+  }
+  
+  if (Tok.is(AsmToken::Integer)) {
+    Value = Tok.getIntVal();
+    getParser().Lex();
+    return false;
+  }
+  
+  return true;
+}
+
+// Parse expression with support for $hex syntax
+bool M65832AsmParser::parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc) {
+  const AsmToken &Tok = getParser().getTok();
+  
+  // Handle $hex prefix
+  if (Tok.is(AsmToken::Dollar)) {
+    SMLoc StartLoc = Tok.getLoc();
+    int64_t Value;
+    if (parseHexNumber(Value))
+      return true;
+    Res = MCConstantExpr::create(Value, getContext());
+    EndLoc = getParser().getTok().getLoc();
+    return false;
+  }
+  
+  // Handle B+symbol for bank-relative addressing
+  if (Tok.is(AsmToken::Identifier) && 
+      Tok.getString().equals_insensitive("B")) {
+    getParser().Lex(); // Eat 'B'
+    if (getParser().getTok().isNot(AsmToken::Plus))
+      return Error(getParser().getTok().getLoc(), "expected '+' after B");
+    getParser().Lex(); // Eat '+'
+    // Parse the symbol/expression after B+
+    return getParser().parseExpression(Res, EndLoc);
+  }
+  
+  // Default to standard expression parsing
   return getParser().parseExpression(Res, EndLoc);
 }
 
@@ -300,10 +406,12 @@ ParseStatus M65832AsmParser::parseImmediate(OperandVector &Operands) {
   if (!getParser().getTok().is(AsmToken::Hash))
     return ParseStatus::NoMatch;
 
+  // Add '#' as a token operand (the matcher expects it)
+  Operands.push_back(M65832Operand::createToken("#", S));
   getParser().Lex(); // Eat '#'
 
   const MCExpr *Expr;
-  if (parseExpression(Expr, E))
+  if (parseM65832Expression(Expr, E))
     return ParseStatus::Failure;
 
   Operands.push_back(M65832Operand::createImm(Expr, S, E));
@@ -319,6 +427,17 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   bool Indirect = false;
   bool IndirectLong = false;
   bool StackRelative = false;
+  bool BankRelative = false;
+
+  // Check for B+addr (bank-relative)
+  if (getParser().getTok().is(AsmToken::Identifier) &&
+      getParser().getTok().getString().equals_insensitive("B")) {
+    BankRelative = true;
+    getParser().Lex(); // Eat 'B'
+    if (getParser().getTok().is(AsmToken::Plus)) {
+      getParser().Lex(); // Eat '+'
+    }
+  }
 
   // Check for indirect: (addr) or [addr]
   if (getParser().getTok().is(AsmToken::LParen)) {
@@ -329,8 +448,8 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
     getParser().Lex();
   }
 
-  // Parse displacement
-  if (parseExpression(Disp, E))
+  // Parse displacement using M65832 expression parser
+  if (parseM65832Expression(Disp, E))
     return ParseStatus::Failure;
 
   // Check for ,X ,Y ,S
@@ -378,36 +497,51 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
 
   E = getParser().getTok().getLoc();
   Operands.push_back(M65832Operand::createMem(BaseReg, Disp, IndexReg, Indirect,
-                                               IndirectLong, StackRelative, S, E));
+                                               IndirectLong, StackRelative, 
+                                               BankRelative, S, E));
   return ParseStatus::Success;
 }
 
 ParseStatus M65832AsmParser::parseOperand(OperandVector &Operands,
                                            StringRef Mnemonic) {
-  // Try immediate
+  // Try immediate (#value)
   if (getParser().getTok().is(AsmToken::Hash))
     return parseImmediate(Operands);
 
   // Try register
   if (getParser().getTok().is(AsmToken::Identifier)) {
-    unsigned RegNo = parseRegisterName(getParser().getTok().getString());
-    if (RegNo != 0) {
-      SMLoc S = getParser().getTok().getLoc();
-      SMLoc E = getParser().getTok().getEndLoc();
-      Operands.push_back(M65832Operand::createReg(RegNo, S, E));
-      getParser().Lex();
-      return ParseStatus::Success;
+    StringRef TokStr = getParser().getTok().getString();
+    // Check if it's a register (but not 'B' which starts bank-relative)
+    if (!TokStr.equals_insensitive("B")) {
+      unsigned RegNo = parseRegisterName(TokStr);
+      if (RegNo != 0) {
+        SMLoc S = getParser().getTok().getLoc();
+        SMLoc E = getParser().getTok().getEndLoc();
+        Operands.push_back(M65832Operand::createReg(RegNo, S, E));
+        getParser().Lex();
+        return ParseStatus::Success;
+      }
     }
   }
 
-  // Try memory operand
+  // Try memory operand (includes B+addr, $addr, symbol, etc.)
   return parseMemoryOperand(Operands);
 }
 
 bool M65832AsmParser::parseInstruction(ParseInstructionInfo &Info,
                                         StringRef Name, SMLoc NameLoc,
                                         OperandVector &Operands) {
-  // Add mnemonic as first operand
+  // Handle instruction suffixes like LD.L, LD.B, LD.W
+  StringRef BaseMnemonic = Name;
+  StringRef Suffix;
+  
+  size_t DotPos = Name.find('.');
+  if (DotPos != StringRef::npos) {
+    BaseMnemonic = Name.substr(0, DotPos);
+    Suffix = Name.substr(DotPos);
+  }
+  
+  // Add mnemonic as first operand (keep full name with suffix for matching)
   Operands.push_back(M65832Operand::createToken(Name, NameLoc));
 
   // If no more tokens, implied addressing
@@ -415,13 +549,13 @@ bool M65832AsmParser::parseInstruction(ParseInstructionInfo &Info,
     return false;
 
   // Parse first operand
-  if (!parseOperand(Operands, Name).isSuccess())
+  if (!parseOperand(Operands, BaseMnemonic).isSuccess())
     return true;
 
   // Parse additional comma-separated operands
   while (getParser().getTok().is(AsmToken::Comma)) {
     getParser().Lex();
-    if (!parseOperand(Operands, Name).isSuccess())
+    if (!parseOperand(Operands, BaseMnemonic).isSuccess())
       return true;
   }
 
@@ -434,7 +568,9 @@ bool M65832AsmParser::parseInstruction(ParseInstructionInfo &Info,
 ParseStatus M65832AsmParser::parseDirective(AsmToken DirectiveID) {
   StringRef IDVal = DirectiveID.getIdentifier();
 
-  if (IDVal == ".m8" || IDVal == ".m16" || IDVal == ".m32")
+  // Handle M65832-specific directives
+  if (IDVal == ".m8" || IDVal == ".m16" || IDVal == ".m32" ||
+      IDVal == ".x8" || IDVal == ".x16" || IDVal == ".x32")
     return ParseStatus::Success;
 
   return ParseStatus::NoMatch;
@@ -468,6 +604,19 @@ bool M65832AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
 unsigned M65832AsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
                                                       unsigned Kind) {
+  M65832Operand &Op = static_cast<M65832Operand &>(AsmOp);
+  
+  // Memory operands can match Mem, calltarget, brtarget, BankRelOp, DPOp
+  if (Op.isMem()) {
+    // Accept memory operands for any memory-like operand class
+    return Match_Success;
+  }
+  
+  // Immediate operands 
+  if (Op.isImm()) {
+    return Match_Success;
+  }
+  
   return Match_InvalidOperand;
 }
 
