@@ -194,16 +194,10 @@ void M65832InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
       MFI.getObjectAlign(FrameIndex));
 
   if (M65832::GPRRegClass.hasSubClassEq(RC)) {
-    // For GPR, we need to go through A: LDA src; STA [sp+offset]
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
-    
-    // LDA src_reg
-    BuildMI(MBB, I, DL, get(M65832::LDA_DP), M65832::A)
-        .addImm(SrcDP);
-    
-    // STA to stack (will be expanded later with frame index)
-    BuildMI(MBB, I, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, getKillRegState(true))
+    // Use STORE32 pseudo which properly supports frame indices
+    // STORE32 has mayStore=1 and uses memsrc operand (base + offset)
+    BuildMI(MBB, I, DL, get(M65832::STORE32))
+        .addReg(SrcReg, getKillRegState(isKill))
         .addFrameIndex(FrameIndex)
         .addImm(0)
         .addMemOperand(MMO);
@@ -234,18 +228,12 @@ void M65832InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
       MFI.getObjectAlign(FrameIndex));
 
   if (M65832::GPRRegClass.hasSubClassEq(RC)) {
-    unsigned DstDP = getDPOffset(DestReg - M65832::R0);
-    
-    // LDA from stack
-    BuildMI(MBB, I, DL, get(M65832::LDA_DP), M65832::A)
+    // Use LOAD32 pseudo which properly supports frame indices
+    // LOAD32 has mayLoad=1 and uses memsrc operand (base + offset)
+    BuildMI(MBB, I, DL, get(M65832::LOAD32), DestReg)
         .addFrameIndex(FrameIndex)
         .addImm(0)
         .addMemOperand(MMO);
-    
-    // STA to dest_reg
-    BuildMI(MBB, I, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, getKillRegState(true))
-        .addImm(DstDP);
   } else if (RC == &M65832::ACCRegClass) {
     BuildMI(MBB, I, DL, get(M65832::PLA), DestReg);
   } else {
@@ -272,6 +260,9 @@ bool M65832InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
     
     // Handle unconditional branches
     if (I->getOpcode() == M65832::BRA || I->getOpcode() == M65832::JMP) {
+      // Check if operand is actually an MBB - might be immediate for inline asm
+      if (!I->getOperand(0).isMBB())
+        return true; // Can't analyze non-MBB branch targets
       if (TBB) {
         // Already have a branch target - this is the fallthrough
         FBB = TBB;
@@ -285,6 +276,9 @@ bool M65832InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
         I->getOpcode() == M65832::BCS || I->getOpcode() == M65832::BCC ||
         I->getOpcode() == M65832::BMI || I->getOpcode() == M65832::BPL ||
         I->getOpcode() == M65832::BVS || I->getOpcode() == M65832::BVC) {
+      // Check if operand is actually an MBB - might be immediate for inline asm
+      if (!I->getOperand(0).isMBB())
+        return true; // Can't analyze non-MBB branch targets
       if (TBB) {
         // Already have unconditional, this is conditional to different target
         return true; // Can't handle this

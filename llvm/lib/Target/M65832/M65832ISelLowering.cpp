@@ -60,6 +60,7 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::ConstantPool, MVT::i32, Custom);
   
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
+  setOperationAction(ISD::BRCOND, MVT::Other, Expand);  // Expand to BR_CC with cmp against 0
   setOperationAction(ISD::SELECT_CC, MVT::i32, Custom);
   setOperationAction(ISD::SETCC, MVT::i32, Custom);
   
@@ -589,8 +590,13 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   
   unsigned StackSize = CCInfo.getStackSize();
   
+  // M65832 JSR pushes a 2-byte return address onto the stack.
+  // We must reserve space for this even when there are no stack-passed arguments.
+  // Without this, local variables on the stack would be corrupted by JSR.
+  unsigned CallFrameSize = std::max(StackSize, 2u);
+  
   // Adjust stack
-  Chain = DAG.getCALLSEQ_START(Chain, StackSize, 0, DL);
+  Chain = DAG.getCALLSEQ_START(Chain, CallFrameSize, 0, DL);
   
   SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
   SmallVector<SDValue, 8> MemOpChains;
@@ -661,7 +667,7 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   InGlue = Chain.getValue(1);
   
   // Adjust stack back
-  Chain = DAG.getCALLSEQ_END(Chain, StackSize, 0, InGlue, DL);
+  Chain = DAG.getCALLSEQ_END(Chain, CallFrameSize, 0, InGlue, DL);
   InGlue = Chain.getValue(1);
   
   // Handle return values

@@ -25,6 +25,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "M65832FixupKinds.h"
 #include "M65832MCTargetDesc.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
@@ -195,6 +196,8 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   
   // Misc
   case M65832::NOP:       return 0xEA;
+  case M65832::STP:       return 0xDB;
+  case M65832::WAI:       return 0xCB;
   
   // Extended instructions ($02 prefix)
   case M65832::MUL_DP:    return 0x00;
@@ -270,12 +273,36 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
     }
   };
 
-  auto emitImm16 = [&](const MCOperand &MO, unsigned Offset) {
+  auto emitImm16 = [&](const MCOperand &MO, unsigned Offset, bool IsPCRel = false) {
     if (MO.isImm()) {
-      emitLE16(static_cast<uint16_t>(MO.getImm()), CB);
+      int64_t Imm = MO.getImm();
+      // For PC-relative branches, the immediate from BuildMI is "*+N" style
+      // (N bytes from instruction start). Convert to CPU offset format:
+      // CPU computes target = PC + offset, where PC = instruction_addr + 3
+      // So if we want target = instruction_addr + N, offset = N - 3
+      if (IsPCRel) {
+        Imm -= 3;
+      }
+      emitLE16(static_cast<uint16_t>(Imm), CB);
     } else if (MO.isExpr()) {
-      Fixups.push_back(
-          MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_2)));
+      // Use target-specific PC-relative fixup kind for branches
+      // Note: Setting PCRel=true causes crashes in MCAssembler layout,
+      // so we use a custom fixup kind to identify PC-relative fixups instead.
+      MCFixupKind Kind = IsPCRel ? MCFixupKind(M65832::fixup_m65832_pcrel_16) 
+                                 : MCFixupKind(FK_Data_2);
+      const MCExpr *Expr = MO.getExpr();
+      
+      // For PC-relative branches, the M65832 calculates target from the 
+      // instruction END (opcode + 3), but the relocation is at opcode + 1.
+      // LLD computes: val = target - reloc_addr
+      // We need: offset = target - (reloc_addr + 2)
+      // So add -2 to the expression.
+      if (IsPCRel) {
+        Expr = MCBinaryExpr::createAdd(
+            Expr, MCConstantExpr::create(-2, Ctx), Ctx);
+      }
+      
+      Fixups.push_back(MCFixup::create(Offset, Expr, Kind, /*PCRel=*/false));
       emitLE16(0, CB);
     } else {
       emitLE16(0, CB);
@@ -449,7 +476,25 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
     emitByte(Opcode, CB);
     if (MI.getNumOperands() > 0) {
       const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
-      emitImm16(MO, 1);
+      // Check if this is a branch instruction (needs PC-relative fixup)
+      bool IsBranch = false;
+      switch (MIOp) {
+      case M65832::BEQ:
+      case M65832::BNE:
+      case M65832::BCS:
+      case M65832::BCC:
+      case M65832::BMI:
+      case M65832::BPL:
+      case M65832::BVS:
+      case M65832::BVC:
+      case M65832::BRA:
+      case M65832::BRL:
+        IsBranch = true;
+        break;
+      default:
+        break;
+      }
+      emitImm16(MO, 1, IsBranch);
     } else {
       emitLE16(0, CB);
     }

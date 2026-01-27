@@ -64,6 +64,12 @@ unsigned M65832ELFObjectWriter::getRelocType(const MCFixup &Fixup,
   case FK_Data_4:
   case M65832::fixup_m65832_32:
     return ELF::R_M65832_32;
+  // PC-relative fixup kinds (handled here even when IsPCRel=false
+  // because we use the fixup kind to identify PC-relative fixups)
+  case M65832::fixup_m65832_pcrel_8:
+    return ELF::R_M65832_PCREL_8;
+  case M65832::fixup_m65832_pcrel_16:
+    return ELF::R_M65832_PCREL_16;
   }
 }
 
