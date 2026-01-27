@@ -118,6 +118,13 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   // We don't have conditional moves
   setOperationAction(ISD::SELECT, MVT::i32, Expand);
   
+  // Jump tables and indirect branches - expand to cascading branches
+  setOperationAction(ISD::BR_JT, MVT::Other, Expand);
+  setOperationAction(ISD::BRIND, MVT::Other, Expand);
+  
+  // Minimum threshold for jump tables (effectively disable them)
+  setMinimumJumpTableEntries(UINT_MAX);
+  
   // Boolean values are i32
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
@@ -128,6 +135,31 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   
   // Stack alignment
   setMinStackArgumentAlignment(Align(4));
+  
+  // =========================================================================
+  // Load/Store Extension Actions
+  // =========================================================================
+  // Zero-extending loads: use extloadi8/extloadi16 patterns (LOAD8/LOAD16)
+  // Sign-extending loads: expand to load + sign-extend
+  for (MVT VT : MVT::integer_valuetypes()) {
+    // EXTLOAD (any-extending) - Legal, matched by LOAD8/LOAD16 patterns
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i8, Legal);
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i16, Legal);
+    // ZEXTLOAD - expand to EXTLOAD + AND (if needed), or just use EXTLOAD
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i8, Expand);
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i16, Expand);
+    // SEXTLOAD - expand to EXTLOAD + sign-extend (SEXT8/SEXT16)
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i8, Expand);
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i16, Expand);
+  }
+  
+  // Truncating stores - Legal, matched by STORE8/STORE16 patterns
+  setTruncStoreAction(MVT::i32, MVT::i8, Legal);
+  setTruncStoreAction(MVT::i32, MVT::i16, Legal);
+  setTruncStoreAction(MVT::i16, MVT::i8, Legal);
   
   // =========================================================================
   // Floating Point Support

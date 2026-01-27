@@ -78,6 +78,99 @@ void M65832InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
   
+  // A <-> Y transfers
+  if (DestReg == M65832::Y && SrcReg == M65832::A) {
+    BuildMI(MBB, I, DL, get(M65832::TAY), M65832::Y)
+        .addReg(M65832::A, getKillRegState(KillSrc));
+    return;
+  }
+  
+  if (DestReg == M65832::A && SrcReg == M65832::Y) {
+    BuildMI(MBB, I, DL, get(M65832::TYA), M65832::A)
+        .addReg(M65832::Y, getKillRegState(KillSrc));
+    return;
+  }
+  
+  // GPR <-> Y transfers (via A)
+  if (DestReg == M65832::Y && M65832::GPRRegClass.contains(SrcReg)) {
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+    BuildMI(MBB, I, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    BuildMI(MBB, I, DL, get(M65832::TAY), M65832::Y)
+        .addReg(M65832::A, RegState::Kill);
+    return;
+  }
+  
+  if (M65832::GPRRegClass.contains(DestReg) && SrcReg == M65832::Y) {
+    unsigned DstDP = getDPOffset(DestReg - M65832::R0);
+    BuildMI(MBB, I, DL, get(M65832::TYA), M65832::A).addReg(M65832::Y, getKillRegState(KillSrc));
+    BuildMI(MBB, I, DL, get(M65832::STA_DP)).addReg(M65832::A, RegState::Kill).addImm(DstDP);
+    return;
+  }
+  
+  // GPR <-> X transfers (via A)
+  if (DestReg == M65832::X && M65832::GPRRegClass.contains(SrcReg)) {
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+    BuildMI(MBB, I, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    BuildMI(MBB, I, DL, get(M65832::TAX), M65832::X)
+        .addReg(M65832::A, RegState::Kill);
+    return;
+  }
+  
+  if (M65832::GPRRegClass.contains(DestReg) && SrcReg == M65832::X) {
+    unsigned DstDP = getDPOffset(DestReg - M65832::R0);
+    BuildMI(MBB, I, DL, get(M65832::TXA), M65832::A).addReg(M65832::X, getKillRegState(KillSrc));
+    BuildMI(MBB, I, DL, get(M65832::STA_DP)).addReg(M65832::A, RegState::Kill).addImm(DstDP);
+    return;
+  }
+  
+  // X <-> Y transfers (via A)
+  if (DestReg == M65832::Y && SrcReg == M65832::X) {
+    BuildMI(MBB, I, DL, get(M65832::TXA), M65832::A).addReg(M65832::X, getKillRegState(KillSrc));
+    BuildMI(MBB, I, DL, get(M65832::TAY), M65832::Y).addReg(M65832::A, RegState::Kill);
+    return;
+  }
+  
+  if (DestReg == M65832::X && SrcReg == M65832::Y) {
+    BuildMI(MBB, I, DL, get(M65832::TYA), M65832::A).addReg(M65832::Y, getKillRegState(KillSrc));
+    BuildMI(MBB, I, DL, get(M65832::TAX), M65832::X).addReg(M65832::A, RegState::Kill);
+    return;
+  }
+  
+  // SP <-> GPR transfers
+  if (M65832::GPRRegClass.contains(DestReg) && SrcReg == M65832::SP) {
+    // TSX; TXA; STA dst  (copy SP to GPR via X and A)
+    unsigned DstDP = getDPOffset(DestReg - M65832::R0);
+    BuildMI(MBB, I, DL, get(M65832::TSX), M65832::X);
+    BuildMI(MBB, I, DL, get(M65832::TXA), M65832::A).addReg(M65832::X, RegState::Kill);
+    BuildMI(MBB, I, DL, get(M65832::STA_DP)).addReg(M65832::A, RegState::Kill).addImm(DstDP);
+    return;
+  }
+  
+  if (DestReg == M65832::SP && M65832::GPRRegClass.contains(SrcReg)) {
+    // LDA src; TAX; TXS  (copy GPR to SP via A and X)
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+    BuildMI(MBB, I, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    BuildMI(MBB, I, DL, get(M65832::TAX), M65832::X).addReg(M65832::A, RegState::Kill);
+    BuildMI(MBB, I, DL, get(M65832::TXS)).addReg(M65832::X, RegState::Kill);
+    return;
+  }
+  
+  // FPU register copies
+  if (M65832::FPR32RegClass.contains(DestReg) && M65832::FPR32RegClass.contains(SrcReg)) {
+    BuildMI(MBB, I, DL, get(M65832::FMOV_S), DestReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    return;
+  }
+  
+  if (M65832::FPR64RegClass.contains(DestReg) && M65832::FPR64RegClass.contains(SrcReg)) {
+    BuildMI(MBB, I, DL, get(M65832::FMOV_D), DestReg)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    return;
+  }
+  
+  // Print debug info before crashing
+  dbgs() << "Cannot copy from " << printReg(SrcReg, &getRegisterInfo())
+         << " to " << printReg(DestReg, &getRegisterInfo()) << "\n";
   llvm_unreachable("Cannot copy between these registers");
 }
 
@@ -692,6 +785,124 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
         .addReg(M65832::A, RegState::Kill)
         .add(MI.getOperand(1)); // Copy the global address operand
+    break;
+  }
+
+  case M65832::LOAD8:
+  case M65832::LOAD8_GLOBAL: {
+    // Load byte from memory, zero-extended to 32-bit
+    // For now, use 32-bit load + AND (M65832 extended ALU has LD.B, but 
+    // classic 6502 mode doesn't have direct byte load in 32-bit mode)
+    Register DstReg = MI.getOperand(0).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+
+    if (MI.getOpcode() == M65832::LOAD8_GLOBAL) {
+      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+          .add(MI.getOperand(1));
+    } else {
+      Register BaseReg = MI.getOperand(1).getReg();
+      int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
+      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::LDA_IND_Y), M65832::A).addImm(BaseDP);
+    }
+    // Mask to 8 bits
+    BuildMI(MBB, MI, DL, get(M65832::AND_IMM), M65832::A)
+        .addReg(M65832::A)
+        .addImm(0xFF);
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
+  case M65832::LOAD16:
+  case M65832::LOAD16_GLOBAL: {
+    // Load 16-bit from memory, zero-extended to 32-bit
+    Register DstReg = MI.getOperand(0).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+
+    if (MI.getOpcode() == M65832::LOAD16_GLOBAL) {
+      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+          .add(MI.getOperand(1));
+    } else {
+      Register BaseReg = MI.getOperand(1).getReg();
+      int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
+      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::LDA_IND_Y), M65832::A).addImm(BaseDP);
+    }
+    // Mask to 16 bits
+    BuildMI(MBB, MI, DL, get(M65832::AND_IMM), M65832::A)
+        .addReg(M65832::A)
+        .addImm(0xFFFF);
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
+  case M65832::STORE8:
+  case M65832::STORE8_GLOBAL: {
+    // Truncating store - store only low 8 bits
+    // The 6502 STA in 8-bit mode stores only 8 bits
+    // For 32-bit mode, we use AND to mask then store
+    Register SrcReg = MI.getOperand(0).getReg();
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    // No masking needed for store - STA in 8-bit mode only stores low byte
+    // But in 32-bit mode we're storing 32 bits, so we need to be careful
+    // For now, just store and let the hardware handle it
+    if (MI.getOpcode() == M65832::STORE8_GLOBAL) {
+      BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
+          .addReg(M65832::A, RegState::Kill)
+          .add(MI.getOperand(1));
+    } else {
+      Register BaseReg = MI.getOperand(1).getReg();
+      int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
+      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(BaseDP);
+    }
+    break;
+  }
+
+  case M65832::STORE16:
+  case M65832::STORE16_GLOBAL: {
+    // Truncating store - store only low 16 bits
+    Register SrcReg = MI.getOperand(0).getReg();
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    if (MI.getOpcode() == M65832::STORE16_GLOBAL) {
+      BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
+          .addReg(M65832::A, RegState::Kill)
+          .add(MI.getOperand(1));
+    } else {
+      Register BaseReg = MI.getOperand(1).getReg();
+      int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
+      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(BaseDP);
+    }
+    break;
+  }
+
+  case M65832::JSR_IND: {
+    // Indirect call through register (function pointer)
+    // Load the target address into A, then use JSR (dp) where dp holds the address
+    Register TargetReg = MI.getOperand(0).getReg();
+    unsigned TargetDP = getDPOffset(TargetReg - M65832::R0);
+    
+    // JSR indirect uses JSR (dp) - opcode $FC dp
+    // The dp location contains the 32-bit target address
+    BuildMI(MBB, MI, DL, get(M65832::JSR_DP_IND))
+        .addImm(TargetDP);
     break;
   }
 

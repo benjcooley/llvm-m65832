@@ -44,5 +44,7 @@ add_llvm_target(M65832CodeGen
   M65832
   )
 
+add_subdirectory(AsmParser)
+add_subdirectory(Common)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)

@@ -568,6 +568,25 @@ let isCodeGenOnly = 1, mayLoad = 1, Defs = [A] in {
   def LOAD32_GLOBAL : Pseudo<(outs GPR:$dst), (ins i32imm:$addr),
                              "# load32 $dst, $addr",
                              [(set GPR:$dst, (load (M65832Wrapper tglobaladdr:$addr)))]>;
+
+  // 8-bit load (zero-extended to 32 bits)
+  // Matches anyextloadi8 - will be expanded to load + AND
+  def LOAD8 : Pseudo<(outs GPR:$dst), (ins memsrc:$addr),
+                     "# load8 $dst, $addr",
+                     [(set GPR:$dst, (extloadi8 ADDRri:$addr))]>;
+  
+  def LOAD8_GLOBAL : Pseudo<(outs GPR:$dst), (ins i32imm:$addr),
+                            "# load8 $dst, $addr",
+                            [(set GPR:$dst, (extloadi8 (M65832Wrapper tglobaladdr:$addr)))]>;
+
+  // 16-bit load (zero-extended to 32 bits)
+  def LOAD16 : Pseudo<(outs GPR:$dst), (ins memsrc:$addr),
+                      "# load16 $dst, $addr",
+                      [(set GPR:$dst, (extloadi16 ADDRri:$addr))]>;
+  
+  def LOAD16_GLOBAL : Pseudo<(outs GPR:$dst), (ins i32imm:$addr),
+                             "# load16 $dst, $addr",
+                             [(set GPR:$dst, (extloadi16 (M65832Wrapper tglobaladdr:$addr)))]>;
 }
 
 // Store GPR to global/memory address
@@ -579,6 +598,24 @@ let isCodeGenOnly = 1, mayStore = 1, Defs = [A] in {
   def STORE32_GLOBAL : Pseudo<(outs), (ins GPR:$src, i32imm:$addr),
                               "# store32 $src, $addr",
                               [(store GPR:$src, (M65832Wrapper tglobaladdr:$addr))]>;
+
+  // 8-bit truncating store
+  def STORE8 : Pseudo<(outs), (ins GPR:$src, memsrc:$addr),
+                      "# store8 $src, $addr",
+                      [(truncstorei8 GPR:$src, ADDRri:$addr)]>;
+
+  def STORE8_GLOBAL : Pseudo<(outs), (ins GPR:$src, i32imm:$addr),
+                             "# store8 $src, $addr",
+                             [(truncstorei8 GPR:$src, (M65832Wrapper tglobaladdr:$addr))]>;
+
+  // 16-bit truncating store
+  def STORE16 : Pseudo<(outs), (ins GPR:$src, memsrc:$addr),
+                       "# store16 $src, $addr",
+                       [(truncstorei16 GPR:$src, ADDRri:$addr)]>;
+
+  def STORE16_GLOBAL : Pseudo<(outs), (ins GPR:$src, i32imm:$addr),
+                              "# store16 $src, $addr",
+                              [(truncstorei16 GPR:$src, (M65832Wrapper tglobaladdr:$addr))]>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1000,10 +1037,40 @@ let isCall = 1 in {
                 A, X, Y];
     let Uses = [SP];
   }
+  
+  // Indirect call through a register (function pointer)
+  // Uses JSR (dp) where dp is the register holding the address
+  let isCodeGenOnly = 1 in
+  def JSR_IND : Pseudo<(outs), (ins GPR:$target),
+                       "JSR\t($target)",
+                       [(M65832call GPR:$target)]> {
+    let Defs = [SP, R0, R1, R2, R3, R4, R5, R6, R7,
+                R8, R9, R10, R11, R12, R13, R14, R15, R30,
+                R32, R33, R34, R35, R36, R37, R38, R39,
+                R40, R41, R42, R43, R44, R45, R46, R47,
+                A, X, Y];
+    let Uses = [SP];
+  }
 }
 
 // Pattern for external symbols (library calls like __addsf3, etc.)
 def : Pat<(M65832call texternalsym:$target), (JSR texternalsym:$target)>;
+
+// Pattern for indirect call through loaded function pointer
+def : Pat<(M65832call GPR:$target), (JSR_IND GPR:$target)>;
+
+// JSR indirect through DP address (for function pointers)
+// Opcode $FC dp - JSR (dp) where dp holds the 32-bit target address
+let isCall = 1, isCodeGenOnly = 1 in
+def JSR_DP_IND : F1<0xFC, (outs), (ins DPOp:$target),
+                    "JSR\t($target)", []> {
+  let Defs = [SP, R0, R1, R2, R3, R4, R5, R6, R7,
+              R8, R9, R10, R11, R12, R13, R14, R15, R30,
+              R32, R33, R34, R35, R36, R37, R38, R39,
+              R40, R41, R42, R43, R44, R45, R46, R47,
+              A, X, Y];
+  let Uses = [SP];
+}
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RTS : F0<0x60, (outs), (ins), "RTS", [(M65832retflag)]> {
@@ -1174,10 +1241,12 @@ def TRAP : F7_Imm8<0x40, (outs), (ins imm8:$code), "trap\t#$code", []> {
 }
 
 //===----------------------------------------------------------------------===//
-// NOP
+// Misc Implied Instructions (for assembly support)
 //===----------------------------------------------------------------------===//
 
 def NOP : F0<0xEA, (outs), (ins), "nop", []>;
+def STP : F0<0xDB, (outs), (ins), "stp", []>;  // Stop processor
+def WAI : F0<0xCB, (outs), (ins), "wai", []>;  // Wait for interrupt
 
 //===----------------------------------------------------------------------===//
 // FPU Instructions
