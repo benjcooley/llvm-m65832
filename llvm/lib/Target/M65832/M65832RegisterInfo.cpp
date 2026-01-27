@@ -28,9 +28,8 @@ using namespace llvm;
 #define GET_REGINFO_TARGET_DESC
 #include "M65832GenRegisterInfo.inc"
 
-M65832RegisterInfo::M65832RegisterInfo(const M65832Subtarget &STI)
-    : M65832GenRegisterInfo(M65832::R30), // Return address register
-      Subtarget(STI) {}
+M65832RegisterInfo::M65832RegisterInfo(const M65832Subtarget & /*STI*/)
+    : M65832GenRegisterInfo(M65832::R30) {} // Return address register
 
 const MCPhysReg *
 M65832RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {

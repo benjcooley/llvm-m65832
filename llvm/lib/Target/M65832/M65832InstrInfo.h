@@ -24,7 +24,6 @@ namespace llvm {
 class M65832Subtarget;
 
 class M65832InstrInfo : public M65832GenInstrInfo {
-  const M65832Subtarget &Subtarget;
   const M65832RegisterInfo RI;
 
 public:

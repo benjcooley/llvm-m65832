@@ -734,7 +734,6 @@ MachineBasicBlock *M65832TargetLowering::emitSelect(MachineInstr &MI,
   // This implements the SELECT pseudo by expanding to branches
   // Strategy: branch on condition, copy appropriate value to destination
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
-  MachineRegisterInfo &MRI = MBB->getParent()->getRegInfo();
   DebugLoc DL = MI.getDebugLoc();
   
   // Create new basic blocks

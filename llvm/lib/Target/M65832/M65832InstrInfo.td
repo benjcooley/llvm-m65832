@@ -309,8 +309,8 @@ let isCodeGenOnly = 1, Defs = [A, SR] in {
 }
 
 // Increment by 1: Use ADDI pattern but optimize to INC when possible
+// Note: (add 1, GPR:$src) pattern not needed - LLVM canonicalizes to (add GPR:$src, 1)
 def : Pat<(add GPR:$src, 1), (INC_GPR GPR:$src)>;
-def : Pat<(add 1, GPR:$src), (INC_GPR GPR:$src)>;
 
 // Decrement by 1
 def : Pat<(add GPR:$src, -1), (DEC_GPR GPR:$src)>;
@@ -1336,9 +1336,9 @@ def STF_S_ind : Instruction {
 // Encoding: $02 [opcode] [ds] where ds = (d << 4) | s
 
 // Binary arithmetic: Fd = Fd op Fs (two-address form)
-class FPU_BinArith<bits<8> op, string asm, SDNode OpNode, ValueType vt,
-                   RegisterClass RC>
+class FPU_BinArith<bits<8> opcode, string asm, SDNode OpNode, RegisterClass RC>
   : Instruction {
+  bits<8> Opcode = opcode;
   let Namespace = "M65832";
   let OutOperandList = (outs RC:$dst);
   let InOperandList = (ins RC:$Fd, RC:$Fs);
@@ -1349,9 +1349,9 @@ class FPU_BinArith<bits<8> op, string asm, SDNode OpNode, ValueType vt,
 }
 
 // Unary operations: Fd = op(Fs)
-class FPU_Unary<bits<8> op, string asm, SDNode OpNode, ValueType vt,
-                RegisterClass RC>
+class FPU_Unary<bits<8> opcode, string asm, SDNode OpNode, RegisterClass RC>
   : Instruction {
+  bits<8> Opcode = opcode;
   let Namespace = "M65832";
   let OutOperandList = (outs RC:$dst);
   let InOperandList = (ins RC:$Fs);
@@ -1361,21 +1361,23 @@ class FPU_Unary<bits<8> op, string asm, SDNode OpNode, ValueType vt,
 }
 
 // Compare: sets flags based on Fd - Fs
-class FPU_Cmp<bits<8> op, string asm, RegisterClass RC, ValueType vt>
+class FPU_Cmp<bits<8> opcode, string asm, RegisterClass RC>
   : Instruction {
+  bits<8> Opcode = opcode;
   let Namespace = "M65832";
   let OutOperandList = (outs);
   let InOperandList = (ins RC:$Fd, RC:$Fs);
   let AsmString = !strconcat(asm, "\t$Fd, $Fs");
-  let Pattern = [(M65832fcmp (vt RC:$Fd), RC:$Fs)];
+  let Pattern = [(M65832fcmp RC:$Fd, RC:$Fs)];
   let Size = 3;
   let Defs = [SR];
   let isCompare = 1;
 }
 
 // Move: Fd = Fs (copy)
-class FPU_Mov<bits<8> op, string asm, RegisterClass RC>
+class FPU_Mov<bits<8> opcode, string asm, RegisterClass RC>
   : Instruction {
+  bits<8> Opcode = opcode;
   let Namespace = "M65832";
   let OutOperandList = (outs RC:$dst);
   let InOperandList = (ins RC:$src);
@@ -1386,7 +1388,7 @@ class FPU_Mov<bits<8> op, string asm, RegisterClass RC>
 
 // Float to integer pseudo: dst = (int)Fd
 // Hardware: F2I.S Fd puts result in A, then we store to GPR
-class FPU_F2I<bits<8> op, string asm, RegisterClass RC, ValueType vt>
+class FPU_F2I<string asm, RegisterClass RC>
   : Pseudo<(outs GPR:$dst), (ins RC:$Fd),
            !strconcat("# f2i ", asm, " $dst, $Fd"),
            [(set GPR:$dst, (fp_to_sint RC:$Fd))]> {
@@ -1396,7 +1398,7 @@ class FPU_F2I<bits<8> op, string asm, RegisterClass RC, ValueType vt>
 
 // Integer to float pseudo: Fd = (float)src
 // Hardware: Load src to A, then I2F.S Fd reads from A
-class FPU_I2F<bits<8> op, string asm, RegisterClass RC, ValueType vt>
+class FPU_I2F<string asm, RegisterClass RC>
   : Pseudo<(outs RC:$dst), (ins GPR:$src),
            !strconcat("# i2f ", asm, " $dst, $src"),
            [(set RC:$dst, (sint_to_fp GPR:$src))]> {
@@ -1451,30 +1453,30 @@ def I2F_D_real : Instruction {
 }
 
 // Single-precision FPU instructions ($C0-$CA)
-def FADD_S : FPU_BinArith<0xC0, "FADD.S", fadd, f32, FPR32>;
-def FSUB_S : FPU_BinArith<0xC1, "FSUB.S", fsub, f32, FPR32>;
-def FMUL_S : FPU_BinArith<0xC2, "FMUL.S", fmul, f32, FPR32>;
-def FDIV_S : FPU_BinArith<0xC3, "FDIV.S", fdiv, f32, FPR32>;
-def FNEG_S : FPU_Unary<0xC4, "FNEG.S", fneg, f32, FPR32>;
-def FABS_S : FPU_Unary<0xC5, "FABS.S", fabs, f32, FPR32>;
-def FCMP_S : FPU_Cmp<0xC6, "FCMP.S", FPR32, f32>;
-def F2I_S  : FPU_F2I<0xC7, "F2I.S", FPR32, f32>;
-def I2F_S  : FPU_I2F<0xC8, "I2F.S", FPR32, f32>;
+def FADD_S : FPU_BinArith<0xC0, "FADD.S", fadd, FPR32>;
+def FSUB_S : FPU_BinArith<0xC1, "FSUB.S", fsub, FPR32>;
+def FMUL_S : FPU_BinArith<0xC2, "FMUL.S", fmul, FPR32>;
+def FDIV_S : FPU_BinArith<0xC3, "FDIV.S", fdiv, FPR32>;
+def FNEG_S : FPU_Unary<0xC4, "FNEG.S", fneg, FPR32>;
+def FABS_S : FPU_Unary<0xC5, "FABS.S", fabs, FPR32>;
+def FCMP_S : FPU_Cmp<0xC6, "FCMP.S", FPR32>;
+def F2I_S  : FPU_F2I<"F2I.S", FPR32>;
+def I2F_S  : FPU_I2F<"I2F.S", FPR32>;
 def FMOV_S : FPU_Mov<0xC9, "FMOV.S", FPR32>;
-def FSQRT_S : FPU_Unary<0xCA, "FSQRT.S", fsqrt, f32, FPR32>;
+def FSQRT_S : FPU_Unary<0xCA, "FSQRT.S", fsqrt, FPR32>;
 
 // Double-precision FPU instructions ($D0-$DA)
-def FADD_D : FPU_BinArith<0xD0, "FADD.D", fadd, f64, FPR64>;
-def FSUB_D : FPU_BinArith<0xD1, "FSUB.D", fsub, f64, FPR64>;
-def FMUL_D : FPU_BinArith<0xD2, "FMUL.D", fmul, f64, FPR64>;
-def FDIV_D : FPU_BinArith<0xD3, "FDIV.D", fdiv, f64, FPR64>;
-def FNEG_D : FPU_Unary<0xD4, "FNEG.D", fneg, f64, FPR64>;
-def FABS_D : FPU_Unary<0xD5, "FABS.D", fabs, f64, FPR64>;
-def FCMP_D : FPU_Cmp<0xD6, "FCMP.D", FPR64, f64>;
-def F2I_D  : FPU_F2I<0xD7, "F2I.D", FPR64, f64>;
-def I2F_D  : FPU_I2F<0xD8, "I2F.D", FPR64, f64>;
+def FADD_D : FPU_BinArith<0xD0, "FADD.D", fadd, FPR64>;
+def FSUB_D : FPU_BinArith<0xD1, "FSUB.D", fsub, FPR64>;
+def FMUL_D : FPU_BinArith<0xD2, "FMUL.D", fmul, FPR64>;
+def FDIV_D : FPU_BinArith<0xD3, "FDIV.D", fdiv, FPR64>;
+def FNEG_D : FPU_Unary<0xD4, "FNEG.D", fneg, FPR64>;
+def FABS_D : FPU_Unary<0xD5, "FABS.D", fabs, FPR64>;
+def FCMP_D : FPU_Cmp<0xD6, "FCMP.D", FPR64>;
+def F2I_D  : FPU_F2I<"F2I.D", FPR64>;
+def I2F_D  : FPU_I2F<"I2F.D", FPR64>;
 def FMOV_D : FPU_Mov<0xD9, "FMOV.D", FPR64>;
-def FSQRT_D : FPU_Unary<0xDA, "FSQRT.D", fsqrt, f64, FPR64>;
+def FSQRT_D : FPU_Unary<0xDA, "FSQRT.D", fsqrt, FPR64>;
 
 // FPU Register transfers ($E0-$E5)
 // FTOA: A = low 32 bits of Fd

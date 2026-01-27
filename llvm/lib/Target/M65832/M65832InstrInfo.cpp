@@ -31,7 +31,7 @@ using namespace llvm;
 M65832InstrInfo::M65832InstrInfo(const M65832Subtarget &STI)
     : M65832GenInstrInfo(STI, RI, M65832::ADJCALLSTACKDOWN,
                           M65832::ADJCALLSTACKUP),
-      Subtarget(STI), RI(STI) {}
+      RI(STI) {}
 
 void M65832InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator I,
