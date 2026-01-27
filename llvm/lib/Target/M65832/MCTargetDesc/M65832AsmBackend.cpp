@@ -6,7 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "M65832MCTargetDesc.h"
+#include "MCTargetDesc/M65832FixupKinds.h"
+#include "MCTargetDesc/M65832MCTargetDesc.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
@@ -38,6 +39,31 @@ public:
     return createM65832ELFObjectWriter(OSABI);
   }
 
+  MCFixupKindInfo getFixupKindInfo(MCFixupKind Kind) const override {
+    // clang-format off
+    const static MCFixupKindInfo Infos[M65832::NumTargetFixupKinds] = {
+      // This table must be in the same order as enum in M65832FixupKinds.h.
+      //
+      // name                     offset bits flags
+      {"fixup_m65832_8",          0,     8,   0},
+      {"fixup_m65832_16",         0,     16,  0},
+      {"fixup_m65832_24",         0,     24,  0},
+      {"fixup_m65832_32",         0,     32,  0},
+      {"fixup_m65832_pcrel_8",    0,     8,   0},
+      {"fixup_m65832_pcrel_16",   0,     16,  0},
+    };
+    // clang-format on
+    static_assert((std::size(Infos)) == M65832::NumTargetFixupKinds,
+                  "Not all fixup kinds added to Infos array");
+
+    if (Kind < FirstTargetFixupKind)
+      return MCAsmBackend::getFixupKindInfo(Kind);
+
+    assert(unsigned(Kind - FirstTargetFixupKind) < M65832::NumTargetFixupKinds &&
+           "Invalid kind!");
+    return Infos[Kind - FirstTargetFixupKind];
+  }
+
   bool writeNopData(raw_ostream &OS, uint64_t Count,
                     const MCSubtargetInfo *STI) const override {
     // NOP opcode is $EA
@@ -48,27 +74,44 @@ public:
 };
 
 void M65832AsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
-                                    const MCValue &Target, uint8_t *Data,
-                                    uint64_t Value, bool IsResolved) {
+                                  const MCValue &Target, uint8_t *Data,
+                                  uint64_t Value, bool IsResolved) {
+  // Call maybeAddReloc to emit relocations for unresolved symbols
+  maybeAddReloc(F, Fixup, Target, Value, IsResolved);
+  
+  if (!Value)
+    return; // Nothing to apply
+
   unsigned Offset = Fixup.getOffset();
   unsigned Kind = Fixup.getKind();
+  unsigned NumBytes;
 
   switch (Kind) {
   default:
     llvm_unreachable("Unknown fixup kind");
   case FK_Data_1:
-    Data[Offset] = Value & 0xFF;
+  case M65832::fixup_m65832_8:
+  case M65832::fixup_m65832_pcrel_8:
+    NumBytes = 1;
     break;
   case FK_Data_2:
-    Data[Offset + 0] = Value & 0xFF;
-    Data[Offset + 1] = (Value >> 8) & 0xFF;
+  case M65832::fixup_m65832_16:
+  case M65832::fixup_m65832_pcrel_16:
+    NumBytes = 2;
+    break;
+  case M65832::fixup_m65832_24:
+    NumBytes = 3;
     break;
   case FK_Data_4:
-    Data[Offset + 0] = Value & 0xFF;
-    Data[Offset + 1] = (Value >> 8) & 0xFF;
-    Data[Offset + 2] = (Value >> 16) & 0xFF;
-    Data[Offset + 3] = (Value >> 24) & 0xFF;
+  case M65832::fixup_m65832_32:
+    NumBytes = 4;
     break;
+  }
+
+  // Write the fixup value in little-endian format
+  for (unsigned i = 0; i < NumBytes; ++i) {
+    Data[Offset + i] = Value & 0xFF;
+    Value >>= 8;
   }
 }
 
