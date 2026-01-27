@@ -14,8 +14,16 @@
  * For RAM-only systems (emulator), everything can be in RAM.
  */
 
-OUTPUT_FORMAT("elf32-littlearm")  /* Closest available format */
+/* OUTPUT_FORMAT for M65832 - let lld auto-detect */
 ENTRY(_start)
+
+/* Define program headers - no PT_PHDR to avoid loading headers at addr 0 */
+PHDRS
+{
+  text PT_LOAD FLAGS(5);   /* R-X */
+  data PT_LOAD FLAGS(6);   /* RW- */
+  bss  PT_LOAD FLAGS(6);   /* RW- */
+}
 
 MEMORY
 {
@@ -38,14 +46,14 @@ SECTIONS
     *(.text)            /* All other code */
     *(.text.*)
     . = ALIGN(4);
-  } > CODE
+  } > CODE :text
 
   /* Read-only data - placed after code */
   .rodata : {
     *(.rodata)
     *(.rodata.*)
     . = ALIGN(4);
-  } > CODE
+  } > CODE :text
 
   /* Initialized data - in DATA region */
   .data : {
@@ -54,7 +62,7 @@ SECTIONS
     *(.data.*)
     . = ALIGN(4);
     __data_end = .;
-  } > DATA
+  } > DATA :data
 
   /* Uninitialized data - in BSS region */
   .bss : {
@@ -64,7 +72,7 @@ SECTIONS
     *(COMMON)
     . = ALIGN(4);
     __bss_end = .;
-  } > BSS
+  } > BSS :bss
 
   /* Stack - at top of memory, grows downward */
   .stack (NOLOAD) : {
@@ -72,14 +80,14 @@ SECTIONS
     __stack_bottom = .;
     . = . + 0x100;
     __stack_top = .;
-  } > STACK
+  } > STACK :NONE
 
   /* Heap - between BSS and stack */
   .heap (NOLOAD) : {
     __heap_start = .;
     . = ALIGN(4);
     __heap_end = ORIGIN(HEAP) + LENGTH(HEAP);
-  } > HEAP
+  } > HEAP :NONE
 
   /* Provide symbols for runtime */
   PROVIDE(__bss_start = __bss_start);

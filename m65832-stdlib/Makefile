@@ -14,8 +14,8 @@
 LLVM_BUILD ?= /Users/benjamincooley/projects/llvm-m65832/build
 CC = $(LLVM_BUILD)/bin/clang-23
 AS = $(LLVM_BUILD)/bin/clang-23
-AR = llvm-ar
-LD = $(LLVM_BUILD)/bin/lld
+AR = ar
+LD = $(LLVM_BUILD)/bin/ld.lld
 
 # Platform directory (emulator hardware layer - no LLVM dependency)
 PLATFORM_DIR ?= /Users/benjamincooley/projects/m65832/emu/platform
@@ -65,14 +65,19 @@ $(BUILD_DIR)/libplatform.a: $(PLATFORM_OBJ)
 	$(AR) rcs $@ $^
 	@echo "Built: $@"
 
-# CRT0 object
-$(BUILD_DIR)/crt0.o: $(STARTUP_S_OBJ)
+# CRT0 object (from C startup - assembly version needs standalone assembler)
+$(BUILD_DIR)/crt0.o: $(BUILD_DIR)/startup/crt0.o
 	@mkdir -p $(dir $@)
 	cp $< $@
 	@echo "Built: $@"
 
+# Build crt0.o from C source explicitly (not .s, which needs standalone assembler)
+$(BUILD_DIR)/startup/crt0.o: startup/baremetal/crt0.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # Init object (for global constructors/destructors)
-$(BUILD_DIR)/init.o: $(STARTUP_C_OBJ)
+$(BUILD_DIR)/init.o: $(BUILD_DIR)/startup/init.o
 	@mkdir -p $(dir $@)
 	cp $< $@
 	@echo "Built: $@"

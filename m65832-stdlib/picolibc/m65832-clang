@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper for clang that adds M65832 target flags
+exec /Users/benjamincooley/projects/llvm-m65832/build/bin/clang \
+    -target m65832-elf \
+    -ffreestanding \
+    "$@"
