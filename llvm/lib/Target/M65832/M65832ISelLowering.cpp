@@ -36,10 +36,15 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
                                              const M65832Subtarget &STI)
     : TargetLowering(TM, STI), Subtarget(STI) {
   
-  // Set up register classes
+  // Set up register classes - GPR for integers
   addRegisterClass(MVT::i32, &M65832::GPRRegClass);
   
+  // FPU register classes for floating point
+  addRegisterClass(MVT::f32, &M65832::FPR32RegClass);
+  addRegisterClass(MVT::f64, &M65832::FPR64RegClass);
+  
   // Compute derived properties from register classes
+  // MUST be called after all register classes are added
   computeRegisterProperties(Subtarget.getRegisterInfo());
   
   // Set stack pointer register
@@ -125,121 +130,121 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setMinStackArgumentAlignment(Align(4));
   
   // =========================================================================
-  // Floating Point Support (soft-float via library calls)
+  // Floating Point Support
   // =========================================================================
-  // M65832 has no FPU, so all floating point operations use software emulation
-  // via compiler-rt/libgcc builtins (__addsf3, __mulsf3, etc.)
+  // M65832 has an FPU with sixteen 64-bit registers (F0-F15).
+  // Operations use two-operand destructive format: Fd = Fd op Fs
+  // Uses hard-float ABI: floats passed in F0-F7, returned in F0.
+  // Note: FPU register classes added above before computeRegisterProperties()
   
-  // f32 operations - all expand to libcalls
-  setOperationAction(ISD::FADD, MVT::f32, Expand);
-  setOperationAction(ISD::FSUB, MVT::f32, Expand);
-  setOperationAction(ISD::FMUL, MVT::f32, Expand);
-  setOperationAction(ISD::FDIV, MVT::f32, Expand);
-  setOperationAction(ISD::FREM, MVT::f32, Expand);
-  setOperationAction(ISD::FNEG, MVT::f32, Expand);
-  setOperationAction(ISD::FABS, MVT::f32, Expand);
-  setOperationAction(ISD::FSQRT, MVT::f32, Expand);
-  setOperationAction(ISD::FSIN, MVT::f32, Expand);
-  setOperationAction(ISD::FCOS, MVT::f32, Expand);
-  setOperationAction(ISD::FPOW, MVT::f32, Expand);
-  setOperationAction(ISD::FLOG, MVT::f32, Expand);
-  setOperationAction(ISD::FLOG2, MVT::f32, Expand);
-  setOperationAction(ISD::FLOG10, MVT::f32, Expand);
-  setOperationAction(ISD::FEXP, MVT::f32, Expand);
-  setOperationAction(ISD::FEXP2, MVT::f32, Expand);
-  setOperationAction(ISD::FEXP10, MVT::f32, Expand);
-  setOperationAction(ISD::FCEIL, MVT::f32, Expand);
-  setOperationAction(ISD::FFLOOR, MVT::f32, Expand);
-  setOperationAction(ISD::FTRUNC, MVT::f32, Expand);
-  setOperationAction(ISD::FRINT, MVT::f32, Expand);
-  setOperationAction(ISD::FNEARBYINT, MVT::f32, Expand);
-  setOperationAction(ISD::FROUND, MVT::f32, Expand);
-  setOperationAction(ISD::FROUNDEVEN, MVT::f32, Expand);
-  setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
-  setOperationAction(ISD::FMINNUM, MVT::f32, Expand);
-  setOperationAction(ISD::FMAXNUM, MVT::f32, Expand);
-  setOperationAction(ISD::FMINIMUM, MVT::f32, Expand);
-  setOperationAction(ISD::FMAXIMUM, MVT::f32, Expand);
-  setOperationAction(ISD::FMA, MVT::f32, Expand);
-  setOperationAction(ISD::FMAD, MVT::f32, Expand);
+  // Basic FP operations - Legal (matched by TableGen patterns)
+  setOperationAction(ISD::FADD, MVT::f32, Legal);
+  setOperationAction(ISD::FSUB, MVT::f32, Legal);
+  setOperationAction(ISD::FMUL, MVT::f32, Legal);
+  setOperationAction(ISD::FDIV, MVT::f32, Legal);
+  setOperationAction(ISD::FNEG, MVT::f32, Legal);
+  setOperationAction(ISD::FABS, MVT::f32, Legal);
+  setOperationAction(ISD::FSQRT, MVT::f32, Legal);
   
-  // f64 operations - all expand to libcalls
-  setOperationAction(ISD::FADD, MVT::f64, Expand);
-  setOperationAction(ISD::FSUB, MVT::f64, Expand);
-  setOperationAction(ISD::FMUL, MVT::f64, Expand);
-  setOperationAction(ISD::FDIV, MVT::f64, Expand);
-  setOperationAction(ISD::FREM, MVT::f64, Expand);
-  setOperationAction(ISD::FNEG, MVT::f64, Expand);
-  setOperationAction(ISD::FABS, MVT::f64, Expand);
-  setOperationAction(ISD::FSQRT, MVT::f64, Expand);
-  setOperationAction(ISD::FSIN, MVT::f64, Expand);
-  setOperationAction(ISD::FCOS, MVT::f64, Expand);
-  setOperationAction(ISD::FPOW, MVT::f64, Expand);
-  setOperationAction(ISD::FLOG, MVT::f64, Expand);
-  setOperationAction(ISD::FLOG2, MVT::f64, Expand);
-  setOperationAction(ISD::FLOG10, MVT::f64, Expand);
-  setOperationAction(ISD::FEXP, MVT::f64, Expand);
-  setOperationAction(ISD::FEXP2, MVT::f64, Expand);
-  setOperationAction(ISD::FEXP10, MVT::f64, Expand);
-  setOperationAction(ISD::FCEIL, MVT::f64, Expand);
-  setOperationAction(ISD::FFLOOR, MVT::f64, Expand);
-  setOperationAction(ISD::FTRUNC, MVT::f64, Expand);
-  setOperationAction(ISD::FRINT, MVT::f64, Expand);
-  setOperationAction(ISD::FNEARBYINT, MVT::f64, Expand);
-  setOperationAction(ISD::FROUND, MVT::f64, Expand);
-  setOperationAction(ISD::FROUNDEVEN, MVT::f64, Expand);
-  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
-  setOperationAction(ISD::FMINNUM, MVT::f64, Expand);
-  setOperationAction(ISD::FMAXNUM, MVT::f64, Expand);
-  setOperationAction(ISD::FMINIMUM, MVT::f64, Expand);
-  setOperationAction(ISD::FMAXIMUM, MVT::f64, Expand);
-  setOperationAction(ISD::FMA, MVT::f64, Expand);
-  setOperationAction(ISD::FMAD, MVT::f64, Expand);
+  setOperationAction(ISD::FADD, MVT::f64, Legal);
+  setOperationAction(ISD::FSUB, MVT::f64, Legal);
+  setOperationAction(ISD::FMUL, MVT::f64, Legal);
+  setOperationAction(ISD::FDIV, MVT::f64, Legal);
+  setOperationAction(ISD::FNEG, MVT::f64, Legal);
+  setOperationAction(ISD::FABS, MVT::f64, Legal);
+  setOperationAction(ISD::FSQRT, MVT::f64, Legal);
   
-  // Floating point conversions - expand to libcalls
-  setOperationAction(ISD::FP_TO_SINT, MVT::i32, Expand);
+  // FP conversions - Legal (FCVT.DS, FCVT.SD, F2I, I2F)
+  setOperationAction(ISD::FP_EXTEND, MVT::f64, Legal);
+  setOperationAction(ISD::FP_ROUND, MVT::f32, Legal);
+  setOperationAction(ISD::FP_TO_SINT, MVT::i32, Legal);
+  setOperationAction(ISD::SINT_TO_FP, MVT::i32, Legal);
+  
+  // Unsigned conversions - expand (no direct hardware support)
   setOperationAction(ISD::FP_TO_UINT, MVT::i32, Expand);
-  setOperationAction(ISD::SINT_TO_FP, MVT::i32, Expand);
   setOperationAction(ISD::UINT_TO_FP, MVT::i32, Expand);
   setOperationAction(ISD::FP_TO_SINT, MVT::i64, Expand);
   setOperationAction(ISD::FP_TO_UINT, MVT::i64, Expand);
   setOperationAction(ISD::SINT_TO_FP, MVT::i64, Expand);
   setOperationAction(ISD::UINT_TO_FP, MVT::i64, Expand);
   
-  // f32 <-> f64 conversions
-  setOperationAction(ISD::FP_EXTEND, MVT::f64, Expand);
-  setOperationAction(ISD::FP_ROUND, MVT::f32, Expand);
+  // FP load/store - Legal (use LDF/STF instructions)
+  setOperationAction(ISD::LOAD, MVT::f32, Legal);
+  setOperationAction(ISD::LOAD, MVT::f64, Legal);
+  setOperationAction(ISD::STORE, MVT::f32, Legal);
+  setOperationAction(ISD::STORE, MVT::f64, Legal);
   
-  // Floating point comparisons - expand to libcalls
-  setOperationAction(ISD::SETCC, MVT::f32, Expand);
-  setOperationAction(ISD::SETCC, MVT::f64, Expand);
-  setOperationAction(ISD::BR_CC, MVT::f32, Expand);
-  setOperationAction(ISD::BR_CC, MVT::f64, Expand);
+  // FP comparisons - Custom lowering using FCMP + conditional select
+  setOperationAction(ISD::SETCC, MVT::f32, Custom);
+  setOperationAction(ISD::SETCC, MVT::f64, Custom);
+  setOperationAction(ISD::BR_CC, MVT::f32, Custom);
+  setOperationAction(ISD::BR_CC, MVT::f64, Custom);
+  
+  // Operations NOT supported by hardware - expand to libcalls
+  setOperationAction(ISD::FREM, MVT::f32, Expand);
+  setOperationAction(ISD::FREM, MVT::f64, Expand);
+  setOperationAction(ISD::FSIN, MVT::f32, Expand);
+  setOperationAction(ISD::FSIN, MVT::f64, Expand);
+  setOperationAction(ISD::FCOS, MVT::f32, Expand);
+  setOperationAction(ISD::FCOS, MVT::f64, Expand);
+  setOperationAction(ISD::FPOW, MVT::f32, Expand);
+  setOperationAction(ISD::FPOW, MVT::f64, Expand);
+  setOperationAction(ISD::FLOG, MVT::f32, Expand);
+  setOperationAction(ISD::FLOG, MVT::f64, Expand);
+  setOperationAction(ISD::FLOG2, MVT::f32, Expand);
+  setOperationAction(ISD::FLOG2, MVT::f64, Expand);
+  setOperationAction(ISD::FLOG10, MVT::f32, Expand);
+  setOperationAction(ISD::FLOG10, MVT::f64, Expand);
+  setOperationAction(ISD::FEXP, MVT::f32, Expand);
+  setOperationAction(ISD::FEXP, MVT::f64, Expand);
+  setOperationAction(ISD::FEXP2, MVT::f32, Expand);
+  setOperationAction(ISD::FEXP2, MVT::f64, Expand);
+  setOperationAction(ISD::FEXP10, MVT::f32, Expand);
+  setOperationAction(ISD::FEXP10, MVT::f64, Expand);
+  setOperationAction(ISD::FCEIL, MVT::f32, Expand);
+  setOperationAction(ISD::FCEIL, MVT::f64, Expand);
+  setOperationAction(ISD::FFLOOR, MVT::f32, Expand);
+  setOperationAction(ISD::FFLOOR, MVT::f64, Expand);
+  setOperationAction(ISD::FTRUNC, MVT::f32, Expand);
+  setOperationAction(ISD::FTRUNC, MVT::f64, Expand);
+  setOperationAction(ISD::FRINT, MVT::f32, Expand);
+  setOperationAction(ISD::FRINT, MVT::f64, Expand);
+  setOperationAction(ISD::FNEARBYINT, MVT::f32, Expand);
+  setOperationAction(ISD::FNEARBYINT, MVT::f64, Expand);
+  setOperationAction(ISD::FROUND, MVT::f32, Expand);
+  setOperationAction(ISD::FROUND, MVT::f64, Expand);
+  setOperationAction(ISD::FROUNDEVEN, MVT::f32, Expand);
+  setOperationAction(ISD::FROUNDEVEN, MVT::f64, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
+  setOperationAction(ISD::FMINNUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMINNUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMAXNUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMAXNUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMINIMUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMINIMUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMAXIMUM, MVT::f32, Expand);
+  setOperationAction(ISD::FMAXIMUM, MVT::f64, Expand);
+  setOperationAction(ISD::FMA, MVT::f32, Expand);
+  setOperationAction(ISD::FMA, MVT::f64, Expand);
+  setOperationAction(ISD::FMAD, MVT::f32, Expand);
+  setOperationAction(ISD::FMAD, MVT::f64, Expand);
+  
+  // Common FP settings
   setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
   setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
   setOperationAction(ISD::SELECT, MVT::f32, Expand);
   setOperationAction(ISD::SELECT, MVT::f64, Expand);
   
-  // Floating point constants - we can't load them directly
+  // Floating point constants - always expand (load from constant pool)
   setOperationAction(ISD::ConstantFP, MVT::f32, Expand);
   setOperationAction(ISD::ConstantFP, MVT::f64, Expand);
   
-  // Bitcast between float and int is free (same registers)
+  // Bitcast between float and int
   setOperationAction(ISD::BITCAST, MVT::f32, Legal);
   setOperationAction(ISD::BITCAST, MVT::i32, Legal);
-  setOperationAction(ISD::BITCAST, MVT::f64, Expand); // Needs i64 handling
+  setOperationAction(ISD::BITCAST, MVT::f64, Expand);
   setOperationAction(ISD::BITCAST, MVT::i64, Expand);
-  
-  // Load/store of floats - same as integers
-  setOperationAction(ISD::LOAD, MVT::f32, Legal);
-  setOperationAction(ISD::STORE, MVT::f32, Legal);
-  setOperationAction(ISD::LOAD, MVT::f64, Expand);  // Needs splitting to 2x32
-  setOperationAction(ISD::STORE, MVT::f64, Expand);
-  
-  // Set libcall names for soft-float operations
-  // Most are already set by default to the standard names:
-  // __addsf3, __adddf3, __subsf3, __subdf3, __mulsf3, __muldf3,
-  // __divsf3, __divdf3, __fixsfsi, __fixdfsi, __floatsisf, __floatsidf, etc.
 }
 
 SDValue M65832TargetLowering::LowerOperation(SDValue Op,
@@ -266,8 +271,10 @@ const char *M65832TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case M65832ISD::RET_FLAG:     return "M65832ISD::RET_FLAG";
   case M65832ISD::CALL:         return "M65832ISD::CALL";
   case M65832ISD::CMP:          return "M65832ISD::CMP";
+  case M65832ISD::FCMP:         return "M65832ISD::FCMP";
   case M65832ISD::BR_CC:        return "M65832ISD::BR_CC";
   case M65832ISD::SELECT_CC:    return "M65832ISD::SELECT_CC";
+  case M65832ISD::SELECT_CC_FP: return "M65832ISD::SELECT_CC_FP";
   case M65832ISD::WRAPPER:      return "M65832ISD::WRAPPER";
   case M65832ISD::SMUL_LOHI:    return "M65832ISD::SMUL_LOHI";
   case M65832ISD::UMUL_LOHI:    return "M65832ISD::UMUL_LOHI";
@@ -330,8 +337,14 @@ SDValue M65832TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(3);
   SDValue Dest = Op.getOperand(4);
   
-  // Generate compare
-  SDValue Cmp = DAG.getNode(M65832ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  // Generate compare - use FCMP for float types, CMP for integers
+  SDValue Cmp;
+  EVT CmpVT = LHS.getValueType();
+  if (CmpVT == MVT::f32 || CmpVT == MVT::f64) {
+    Cmp = DAG.getNode(M65832ISD::FCMP, DL, MVT::Glue, LHS, RHS);
+  } else {
+    Cmp = DAG.getNode(M65832ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  }
   
   // Generate branch
   SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
@@ -347,14 +360,22 @@ SDValue M65832TargetLowering::LowerSELECT_CC(SDValue Op,
   SDValue TrueVal = Op.getOperand(2);
   SDValue FalseVal = Op.getOperand(3);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
+  EVT CmpVT = LHS.getValueType();
   
-  // Generate compare
-  SDValue Cmp = DAG.getNode(M65832ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  // For floating point comparisons, use FCMP with glue-based SELECT_CC_FP
+  // FP operations don't have the flag-clobbering issue that integer ops do
+  if (CmpVT == MVT::f32 || CmpVT == MVT::f64) {
+    SDValue Cmp = DAG.getNode(M65832ISD::FCMP, DL, MVT::Glue, LHS, RHS);
+    SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
+    return DAG.getNode(M65832ISD::SELECT_CC_FP, DL, Op.getValueType(), 
+                       TrueVal, FalseVal, CCVal, Cmp);
+  }
   
-  // Generate select using our custom node
+  // For integers, include LHS/RHS so each SELECT has its own CMP
+  // This ensures flags aren't clobbered by intervening instructions
   SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
-  return DAG.getNode(M65832ISD::SELECT_CC, DL, Op.getValueType(), TrueVal,
-                     FalseVal, CCVal, Cmp);
+  return DAG.getNode(M65832ISD::SELECT_CC, DL, Op.getValueType(), 
+                     LHS, RHS, TrueVal, FalseVal, CCVal);
 }
 
 SDValue M65832TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
@@ -362,16 +383,22 @@ SDValue M65832TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   SDValue LHS = Op.getOperand(0);
   SDValue RHS = Op.getOperand(1);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
+  EVT CmpVT = LHS.getValueType();
   
-  // Generate compare
-  SDValue Cmp = DAG.getNode(M65832ISD::CMP, DL, MVT::Glue, LHS, RHS);
-  
-  // Generate select with 1/0 values
   SDValue One = DAG.getConstant(1, DL, MVT::i32);
   SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
   SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
   
-  return DAG.getNode(M65832ISD::SELECT_CC, DL, MVT::i32, One, Zero, CCVal, Cmp);
+  // For floating point comparisons, use FCMP with glue-based SELECT_CC_FP
+  if (CmpVT == MVT::f32 || CmpVT == MVT::f64) {
+    SDValue Cmp = DAG.getNode(M65832ISD::FCMP, DL, MVT::Glue, LHS, RHS);
+    return DAG.getNode(M65832ISD::SELECT_CC_FP, DL, MVT::i32, 
+                       One, Zero, CCVal, Cmp);
+  }
+  
+  // For integers, include LHS/RHS for comparison
+  return DAG.getNode(M65832ISD::SELECT_CC, DL, MVT::i32, 
+                     LHS, RHS, One, Zero, CCVal);
 }
 
 SDValue M65832TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
@@ -458,8 +485,17 @@ SDValue M65832TargetLowering::LowerFormalArguments(
       EVT RegVT = VA.getLocVT();
       MCRegister LocReg = VA.getLocReg();
       
+      // Select the correct register class based on register type
+      const TargetRegisterClass *RC;
+      if (M65832::FPR32RegClass.contains(LocReg) ||
+          M65832::FPR64RegClass.contains(LocReg)) {
+        RC = RegVT == MVT::f64 ? &M65832::FPR64RegClass : &M65832::FPR32RegClass;
+      } else {
+        RC = &M65832::GPRRegClass;
+      }
+      
       // Add the register as a live-in
-      Register Reg = MF.addLiveIn(LocReg, &M65832::GPRRegClass);
+      Register Reg = MF.addLiveIn(LocReg, RC);
       
       SDValue ArgValue = DAG.getCopyFromReg(Chain, DL, Reg, RegVT);
       
@@ -509,6 +545,9 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   SDValue Callee = CLI.Callee;
   CallingConv::ID CallConv = CLI.CallConv;
   bool isVarArg = CLI.IsVarArg;
+  
+  // Disable tail call optimization - not properly implemented yet
+  CLI.IsTailCall = false;
   
   MachineFunction &MF = DAG.getMachineFunction();
   

@@ -1107,12 +1107,22 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
 
   case M65832::SELECT_CC_PSEUDO: {
-    // Conditional select: dst = (cc) ? trueVal : falseVal
+    // Conditional select: dst = (lhs cc rhs) ? trueVal : falseVal
     // Use inline branch sequence - MBB splitting causes iterator issues in expandPostRAPseudo
+    // Operands: dst, lhs, rhs, trueVal, falseVal, cc
     Register DstReg = MI.getOperand(0).getReg();
-    Register TrueReg = MI.getOperand(1).getReg();
-    Register FalseReg = MI.getOperand(2).getReg();
-    int64_t CC = MI.getOperand(3).getImm();
+    Register LHSReg = MI.getOperand(1).getReg();
+    Register RHSReg = MI.getOperand(2).getReg();
+    Register TrueReg = MI.getOperand(3).getReg();
+    Register FalseReg = MI.getOperand(4).getReg();
+    int64_t CC = MI.getOperand(5).getImm();
+    
+    // First, emit the CMP instruction to set flags
+    // This ensures each SELECT_CC has its own comparison, regardless of
+    // any flag-clobbering instructions scheduled between multiple SELECTs
+    BuildMI(MBB, MI, DL, get(M65832::CMPR_DP))
+        .addReg(LHSReg)
+        .addReg(RHSReg);
     
     // Handle register aliasing: when TrueReg == DstReg, we must NOT clobber it
     // by copying FalseReg first. Instead, invert the logic:
@@ -1248,6 +1258,103 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     }
     
     // Copy second value (only reached if effective condition is true)
+    BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(SecondCopyReg);
+    
+    break;
+  }
+
+  case M65832::SELECT_CC_FP_PSEUDO: {
+    // FP conditional select: dst = (cc) ? trueVal : falseVal
+    // Flags are already set by FCMP (via glue), so no CMP needed
+    // Operands: dst, trueVal, falseVal, cc
+    Register DstReg = MI.getOperand(0).getReg();
+    Register TrueReg = MI.getOperand(1).getReg();
+    Register FalseReg = MI.getOperand(2).getReg();
+    int64_t CC = MI.getOperand(3).getImm();
+    
+    // Handle register aliasing same as integer version
+    bool InvertLogic = (TrueReg == DstReg && TrueReg != FalseReg);
+    
+    if (TrueReg == DstReg && FalseReg == DstReg) {
+      break;  // Both aliases - nothing to do
+    }
+    
+    Register FirstCopyReg = InvertLogic ? TrueReg : FalseReg;
+    Register SecondCopyReg = InvertLogic ? FalseReg : TrueReg;
+    
+    auto InvertCC = [](int64_t cc) -> int64_t {
+      switch (cc) {
+      case ISD::SETEQ: return ISD::SETNE;
+      case ISD::SETNE: return ISD::SETEQ;
+      case ISD::SETLT: return ISD::SETGE;
+      case ISD::SETGE: return ISD::SETLT;
+      case ISD::SETGT: return ISD::SETLE;
+      case ISD::SETLE: return ISD::SETGT;
+      case ISD::SETULT: return ISD::SETUGE;
+      case ISD::SETUGE: return ISD::SETULT;
+      case ISD::SETUGT: return ISD::SETULE;
+      case ISD::SETULE: return ISD::SETUGT;
+      case ISD::SETOEQ: return ISD::SETONE;
+      case ISD::SETONE: return ISD::SETOEQ;
+      case ISD::SETOLT: return ISD::SETOGE;
+      case ISD::SETOGE: return ISD::SETOLT;
+      case ISD::SETOGT: return ISD::SETOLE;
+      case ISD::SETOLE: return ISD::SETOGT;
+      case ISD::SETUNE: return ISD::SETOEQ;
+      default: return cc;
+      }
+    };
+    
+    int64_t EffectiveCC = InvertLogic ? InvertCC(CC) : CC;
+    
+    if (FirstCopyReg != DstReg) {
+      BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(FirstCopyReg);
+    }
+    
+    unsigned SkipBrOpc;
+    bool NeedDualBranch = false;
+    
+    switch (EffectiveCC) {
+    case ISD::SETEQ:
+    case ISD::SETOEQ:  SkipBrOpc = M65832::BNE; break;
+    case ISD::SETNE:
+    case ISD::SETONE:
+    case ISD::SETUNE:  SkipBrOpc = M65832::BEQ; break;
+    case ISD::SETLT:
+    case ISD::SETOLT:  SkipBrOpc = M65832::BPL; break;
+    case ISD::SETGE:
+    case ISD::SETOGE:  SkipBrOpc = M65832::BMI; break;
+    case ISD::SETGT:
+    case ISD::SETOGT:  NeedDualBranch = true; break;
+    case ISD::SETLE:
+    case ISD::SETOLE:  NeedDualBranch = true; break;
+    case ISD::SETULT:  SkipBrOpc = M65832::BCS; break;
+    case ISD::SETUGE:  SkipBrOpc = M65832::BCC; break;
+    case ISD::SETUGT:  NeedDualBranch = true; break;
+    case ISD::SETULE:  NeedDualBranch = true; break;
+    default:           SkipBrOpc = M65832::BEQ; break;
+    }
+    
+    if (NeedDualBranch) {
+      if (EffectiveCC == ISD::SETGT || EffectiveCC == ISD::SETOGT) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(11);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(8);
+      } else if (EffectiveCC == ISD::SETLE || EffectiveCC == ISD::SETOLE) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(9);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(6);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(8);
+      } else if (EffectiveCC == ISD::SETUGT) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(11);
+        BuildMI(MBB, MI, DL, get(M65832::BCC)).addImm(8);
+      } else if (EffectiveCC == ISD::SETULE) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(9);
+        BuildMI(MBB, MI, DL, get(M65832::BCC)).addImm(6);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(8);
+      }
+    } else {
+      BuildMI(MBB, MI, DL, get(SkipBrOpc)).addImm(8);
+    }
+    
     BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(SecondCopyReg);
     
     break;

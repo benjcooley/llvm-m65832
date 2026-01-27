@@ -24,7 +24,36 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 | Conditional branches | ✅ | BEQ, BNE, BMI, BPL, etc. |
 | ELF object output | ✅ | EM_M65832 = 0x6583 |
 | DWARF debug info | ✅ | CFI directives supported |
-| **Floating point (soft)** | ✅ | Via compiler-rt/libgcc libcalls |
+| **Hardware FPU** | ✅ | 16x64-bit regs, hard-float ABI |
+
+### Floating Point Support
+
+The M65832 backend uses **hardware FPU** with a hard-float ABI:
+
+| Feature | Status |
+|---------|--------|
+| f32 operations (add/sub/mul/div/neg/abs/sqrt) | ✅ Hardware FPU |
+| f64 operations (add/sub/mul/div/neg/abs/sqrt) | ✅ Hardware FPU |
+| f32/f64 conversions (FCVT.DS, FCVT.SD) | ✅ Hardware FPU |
+| Trigonometric (sin/cos/tan) | Library calls |
+| Transcendental (exp/log/pow) | Library calls |
+
+**Hard-float ABI:**
+- Float arguments passed in F0-F7
+- Float return values in F0
+- F0-F13 are caller-saved
+- F14-F15 are callee-saved
+
+**Example generated code:**
+```c
+float fadd(float a, float b) { return a + b; }
+```
+Generates:
+```asm
+fadd:
+    FADD.S F0, F1    ; F0 = F0 + F1
+    RTS
+```
 
 ### Known Limitations
 
@@ -32,7 +61,7 @@ LLVM backend for the M65832 processor - a 32-bit evolution of the 6502/65816 arc
 - Some condition codes (GT, LE) use approximations
 - Comparison falls back to LDA/CMP instead of CMPR_DP
 - No hardware multiply/divide (uses libcalls)
-- No hardware FPU (uses soft-float libcalls)
+- FP comparisons (FCMP) not yet fully integrated
 - C++ exceptions not yet supported
 
 ## Building
@@ -60,7 +89,7 @@ cat /tmp/test.s
 The M65832 has a 64-register window (R0-R63) accessed via Direct Page addressing:
 - R0 = $00, R1 = $04, R2 = $08, ... R63 = $FC
 
-**Register Usage Convention:**
+**GPR Usage Convention:**
 | Registers | Usage |
 |-----------|-------|
 | R0-R7 | Arguments / Return values |
@@ -72,6 +101,15 @@ The M65832 has a 64-register window (R0-R63) accessed via Direct Page addressing
 | R31 | Reserved |
 | R32-R55 | Callee-saved |
 | R56-R63 | Reserved for future |
+
+**FPU Registers (optional, when FPU feature enabled):**
+| Registers | Width | Usage |
+|-----------|-------|-------|
+| F0-F7 | 64-bit | Arguments / Return values (caller-saved) |
+| F8-F13 | 64-bit | Temporaries (caller-saved) |
+| F14-F15 | 64-bit | Callee-saved |
+
+Each FPU register holds either IEEE 754 binary64 (double) or binary32 (float, low 32 bits).
 
 ### Extended Instructions
 
@@ -96,6 +134,32 @@ SAR  R0,R0,#$04   ; R0 = R0 >> 4 (arithmetic)
 ```asm
 SEXT8  R0,R1      ; R0 = sign_extend_8(R1)
 CLZ    R0,R1      ; R0 = count_leading_zeros(R1)
+```
+
+**FPU Instructions ($02 $B0-$EF):**
+```asm
+; Load/Store (64-bit)
+LDF F0, $20       ; F0 = [DP+$20] (direct page)
+STF F5, $100      ; [B+$100] = F5 (bank-relative)
+
+; Single-precision arithmetic (Fd = Fd op Fs)
+FADD.S F0, F1     ; F0 = F0 + F1
+FSUB.S F2, F3     ; F2 = F2 - F3
+FMUL.S F0, F4     ; F0 = F0 * F4
+FDIV.S F1, F2     ; F1 = F1 / F2
+FNEG.S F0, F1     ; F0 = -F1
+FABS.S F0, F1     ; F0 = |F1|
+FSQRT.S F0, F1    ; F0 = sqrt(F1)
+
+; Double-precision (same format, .D suffix)
+FADD.D F0, F1     ; F0 = F0 + F1 (64-bit)
+FMUL.D F2, F3     ; F2 = F2 * F3
+
+; Conversions
+FCVT.DS F0, F1    ; F0 = (double)F1 (extend)
+FCVT.SD F0, F1    ; F0 = (float)F1 (truncate)
+F2I.S F0          ; A = (int)F0
+I2F.S F0          ; F0 = (float)A
 ```
 
 ### Assembly Syntax
@@ -188,7 +252,8 @@ When compiling for M65832, these macros are defined:
 1. **Linker support** - Configure lld or external linker
 2. **C runtime** - crt0.s, libcalls for mul/div
 3. **Libc port** - Picolibc or newlib
-4. **Exception handling** - C++ exception support
+4. **FP comparisons** - Complete FCMP integration for floating-point conditionals
+5. **Exception handling** - C++ exception support
 
 ## License
 

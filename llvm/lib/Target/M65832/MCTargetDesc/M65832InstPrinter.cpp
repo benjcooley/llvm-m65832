@@ -152,7 +152,13 @@ void M65832InstPrinter::printBranchTarget(const MCInst *MI, unsigned OpNo,
                                             raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isImm()) {
-    printHexImm(O, Op.getImm());
+    // For relative branches, print as *+offset or *-offset
+    int64_t Offset = Op.getImm();
+    if (Offset >= 0) {
+      O << "*+" << Offset;
+    } else {
+      O << "*" << Offset;  // Negative already has minus sign
+    }
   } else if (Op.isExpr()) {
     MAI.printExpr(O, *Op.getExpr());
   }

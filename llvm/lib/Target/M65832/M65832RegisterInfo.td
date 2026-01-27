@@ -214,3 +214,68 @@ def GPRReserved : RegisterClass<"M65832", [i32], 32,
        R56, R57, R58, R59, R60, R61, R62, R63)> {
   let isAllocatable = 0;
 }
+
+//===----------------------------------------------------------------------===//
+// FPU Registers (optional, when HasFPU=true)
+//
+// The M65832 FPU has sixteen 64-bit registers (F0-F15) with two-operand
+// destructive operations: Fd = Fd op Fs
+//
+// Register allocation:
+//   F0-F7   Arguments / return values (caller-saved)
+//   F8-F13  Temporaries (caller-saved)
+//   F14-F15 Callee-saved
+//
+// Each register can hold either:
+//   - Double-precision (IEEE 754 binary64): full 64 bits
+//   - Single-precision (IEEE 754 binary32): low 32 bits
+//===----------------------------------------------------------------------===//
+
+// FPU Register definitions
+def F0  : M65832Reg<80,  "F0">,  DwarfRegNum<[80]>;
+def F1  : M65832Reg<81,  "F1">,  DwarfRegNum<[81]>;
+def F2  : M65832Reg<82,  "F2">,  DwarfRegNum<[82]>;
+def F3  : M65832Reg<83,  "F3">,  DwarfRegNum<[83]>;
+def F4  : M65832Reg<84,  "F4">,  DwarfRegNum<[84]>;
+def F5  : M65832Reg<85,  "F5">,  DwarfRegNum<[85]>;
+def F6  : M65832Reg<86,  "F6">,  DwarfRegNum<[86]>;
+def F7  : M65832Reg<87,  "F7">,  DwarfRegNum<[87]>;
+def F8  : M65832Reg<88,  "F8">,  DwarfRegNum<[88]>;
+def F9  : M65832Reg<89,  "F9">,  DwarfRegNum<[89]>;
+def F10 : M65832Reg<90,  "F10">, DwarfRegNum<[90]>;
+def F11 : M65832Reg<91,  "F11">, DwarfRegNum<[91]>;
+def F12 : M65832Reg<92,  "F12">, DwarfRegNum<[92]>;
+def F13 : M65832Reg<93,  "F13">, DwarfRegNum<[93]>;
+def F14 : M65832Reg<94,  "F14">, DwarfRegNum<[94]>;
+def F15 : M65832Reg<95,  "F15">, DwarfRegNum<[95]>;
+
+// FPU register class for 64-bit doubles - ordered by allocation preference
+// (volatile first, callee-saved last)
+def FPR64 : RegisterClass<"M65832", [f64], 64,
+  (add
+    // Caller-saved: arguments then temporaries
+    F0, F1, F2, F3, F4, F5, F6, F7,   // Arguments / return
+    F8, F9, F10, F11, F12, F13,       // Temporaries
+    // Callee-saved
+    F14, F15
+  )> {
+  let CopyCost = 2;  // FMOV is relatively cheap
+}
+
+// FPU register class for 32-bit floats (uses same registers, low 32 bits)
+def FPR32 : RegisterClass<"M65832", [f32], 32,
+  (add
+    F0, F1, F2, F3, F4, F5, F6, F7,
+    F8, F9, F10, F11, F12, F13,
+    F14, F15
+  )> {
+  let CopyCost = 2;
+}
+
+// FPU argument registers only
+def FPRArg : RegisterClass<"M65832", [f32, f64], 64,
+  (add F0, F1, F2, F3, F4, F5, F6, F7)>;
+
+// FPU callee-saved registers
+def FPRCalleeSaved : RegisterClass<"M65832", [f32, f64], 64,
+  (add F14, F15)>;

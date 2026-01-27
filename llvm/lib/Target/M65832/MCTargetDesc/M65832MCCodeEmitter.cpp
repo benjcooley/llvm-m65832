@@ -12,7 +12,7 @@
 // - Implied (1 byte): opcode
 // - Direct Page (2 bytes): opcode + dp_addr
 // - Bank-relative 16 (3 bytes): opcode + addr_lo + addr_hi (B+$xxxx)
-// - Relative 8 (2 bytes): opcode + offset
+// - Relative 16 (3 bytes): opcode + offset_lo + offset_hi (branches in 32-bit mode)
 // - Imm32 (5 bytes): opcode + imm[0:31] (32-bit mode)
 //
 // Extended encodings ($02 prefix):

@@ -8,10 +8,13 @@
 //
 // M65832 Calling Convention:
 //
-//   Arguments:    R0-R7 (first 8), then stack
-//   Return:       R0 (32-bit), R0:R1 (64-bit)
-//   Caller-saved: R0-R15, R30, R32-R47, A, X, Y
-//   Callee-saved: R16-R23, R48-R55, R29
+//   Integer Arguments:  R0-R7 (first 8), then stack
+//   Integer Return:     R0 (32-bit), R0:R1 (64-bit)
+//   FPU Arguments:      F0-F7 (first 8), then stack (when FPU available)
+//   FPU Return:         F0 (when FPU available)
+//
+//   Caller-saved: R0-R15, R30, R32-R47, A, X, Y, F0-F13
+//   Callee-saved: R16-R23, R48-R55, R29, F14-F15
 //   Reserved:     R24-R28, R31, R56-R63, SP, D, B, VBR, T
 //
 //   Stack grows downward, 4-byte alignment minimum.
@@ -32,11 +35,11 @@ def RetCC_M65832 : CallingConv<[
   // i64 returns in R0 (low) and R1 (high)
   CCIfType<[i64], CCAssignToRegWithShadow<[R0], [R1]>>,
   
-  // f32 returns in R0 (bit-cast)
-  CCIfType<[f32], CCAssignToReg<[R0]>>,
+  // f32 returns in F0 (hard-float ABI)
+  CCIfType<[f32], CCAssignToReg<[F0]>>,
   
-  // f64 returns in R0:R1
-  CCIfType<[f64], CCAssignToRegWithShadow<[R0], [R1]>>
+  // f64 returns in F0 (hard-float ABI)
+  CCIfType<[f64], CCAssignToReg<[F0]>>
 ]>;
 
 //===----------------------------------------------------------------------===//
@@ -53,19 +56,22 @@ def CC_M65832 : CallingConv<[
   // i64 uses register pairs (even-aligned: R0:R1, R2:R3, R4:R5, R6:R7)
   CCIfType<[i64], CCAssignToRegWithShadow<[R0, R2, R4, R6], [R1, R3, R5, R7]>>,
   
-  // f32 treated like i32
-  CCIfType<[f32], CCAssignToReg<[R0, R1, R2, R3, R4, R5, R6, R7]>>,
+  // f32 in F0-F7 (hard-float ABI)
+  CCIfType<[f32], CCAssignToReg<[F0, F1, F2, F3, F4, F5, F6, F7]>>,
   
-  // f64 treated like i64
-  CCIfType<[f64], CCAssignToRegWithShadow<[R0, R2, R4, R6], [R1, R3, R5, R7]>>,
+  // f64 in F0-F7 (hard-float ABI)
+  CCIfType<[f64], CCAssignToReg<[F0, F1, F2, F3, F4, F5, F6, F7]>>,
   
   // Structs passed by value
   CCIfByVal<CCPassByVal<4, 4>>,
   
-  // Remaining i32/f32 on stack, 4-byte slots, 4-byte aligned
-  CCIfType<[i32, f32], CCAssignToStack<4, 4>>,
+  // Remaining i32 on stack
+  CCIfType<[i32], CCAssignToStack<4, 4>>,
   
-  // Remaining i64/f64 on stack, 8-byte slots, 4-byte aligned
+  // Remaining f32 on stack
+  CCIfType<[f32], CCAssignToStack<4, 4>>,
+  
+  // Remaining i64/f64 on stack, 8-byte slots
   CCIfType<[i64, f64], CCAssignToStack<8, 4>>
 ]>;
 
@@ -73,11 +79,12 @@ def CC_M65832 : CallingConv<[
 // Callee-Saved Registers
 //===----------------------------------------------------------------------===//
 
-// Standard callee-saved registers
+// Standard callee-saved registers (hard-float ABI)
 def CSR_M65832 : CalleeSavedRegs<(add
-  R16, R17, R18, R19, R20, R21, R22, R23,   // Primary callee-saved
-  R48, R49, R50, R51, R52, R53, R54, R55,   // Extended callee-saved
-  R29                                        // Frame pointer
+  R16, R17, R18, R19, R20, R21, R22, R23,   // Primary callee-saved GPRs
+  R48, R49, R50, R51, R52, R53, R54, R55,   // Extended callee-saved GPRs
+  R29,                                       // Frame pointer
+  F14, F15                                   // Callee-saved FPU registers
 )>;
 
 // For interrupt handlers - save all volatile registers
@@ -92,7 +99,10 @@ def CSR_M65832_Interrupt : CalleeSavedRegs<(add
   R48, R49, R50, R51, R52, R53, R54, R55,
   R29,
   // Architectural registers
-  A, X, Y
+  A, X, Y,
+  // FPU registers
+  F0, F1, F2, F3, F4, F5, F6, F7,
+  F8, F9, F10, F11, F12, F13, F14, F15
 )>;
 
 // No callee-saved (for special cases)

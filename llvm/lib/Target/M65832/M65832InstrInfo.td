@@ -22,6 +22,19 @@
 include "M65832InstrFormats.td"
 
 //===----------------------------------------------------------------------===//
+// Subtarget Feature Predicates
+//===----------------------------------------------------------------------===//
+
+def HasFPU : Predicate<"Subtarget->hasFPU()">,
+             AssemblerPredicate<(all_of FeatureFPU), "fpu">;
+
+def HasHWMul : Predicate<"Subtarget->hasHWMul()">,
+               AssemblerPredicate<(all_of FeatureHWMul), "hwmul">;
+
+def HasAtomics : Predicate<"Subtarget->hasAtomics()">,
+                 AssemblerPredicate<(all_of FeatureAtomics), "atomics">;
+
+//===----------------------------------------------------------------------===//
 // Type Profiles
 //===----------------------------------------------------------------------===//
 
@@ -31,7 +44,12 @@ def SDT_M65832CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_M65832Wrapper   : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>, SDTCisPtrTy<0>]>;
 def SDT_M65832Cmp       : SDTypeProfile<0, 2, [SDTCisSameAs<0, 1>]>;
 def SDT_M65832BrCC      : SDTypeProfile<0, 2, [SDTCisVT<0, OtherVT>, SDTCisVT<1, i32>]>;
-def SDT_M65832SelectCC  : SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>, SDTCisSameAs<1, 2>, SDTCisVT<3, i32>]>;
+// SelectCC includes LHS/RHS so each select has its own comparison
+// Format: result = (lhs CC rhs) ? trueVal : falseVal
+// Operands: lhs, rhs, trueVal, falseVal, cc
+def SDT_M65832SelectCC  : SDTypeProfile<1, 5, [SDTCisSameAs<0, 1>, SDTCisSameAs<1, 2>, 
+                                               SDTCisSameAs<2, 3>, SDTCisSameAs<3, 4>,
+                                               SDTCisVT<5, i32>]>;
 
 //===----------------------------------------------------------------------===//
 // M65832 Specific Nodes
@@ -52,12 +70,17 @@ def M65832callseq_end   : SDNode<"ISD::CALLSEQ_END", SDT_M65832CallSeqEnd,
 def M65832wrapper : SDNode<"M65832ISD::WRAPPER", SDT_M65832Wrapper>;
 
 def M65832cmp     : SDNode<"M65832ISD::CMP", SDT_M65832Cmp, [SDNPOutGlue]>;
+def M65832fcmp    : SDNode<"M65832ISD::FCMP", SDT_M65832Cmp, [SDNPOutGlue]>;
 
 def M65832brcc    : SDNode<"M65832ISD::BR_CC", SDT_M65832BrCC,
                            [SDNPHasChain, SDNPInGlue]>;
 
-def M65832selectcc : SDNode<"M65832ISD::SELECT_CC", SDT_M65832SelectCC,
-                            [SDNPInGlue]>;
+// SELECT_CC now includes LHS/RHS for comparison, no glue needed
+def M65832selectcc : SDNode<"M65832ISD::SELECT_CC", SDT_M65832SelectCC, []>;
+
+// SELECT_CC_FP uses glue from FCMP (FP comparisons don't have flag-clobbering issue)
+def SDT_M65832SelectCCFP : SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>, SDTCisSameAs<1, 2>, SDTCisVT<3, i32>]>;
+def M65832selectccfp : SDNode<"M65832ISD::SELECT_CC_FP", SDT_M65832SelectCCFP, [SDNPInGlue]>;
 
 //===----------------------------------------------------------------------===//
 // Operand Definitions
@@ -192,14 +215,14 @@ let isCodeGenOnly = 1, Defs = [A] in {
   // ADD: dst = src1 + src2 (legacy 3-operand form)
   // Expands to: LDA src1; CLC; ADC src2; STA dst
   def ADD_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "# add $dst, $src1, $src2",
-                       []>;  // Pattern removed - use ADDR_DP
+                      "# add $dst, $src1, $src2",
+                      [(set GPR:$dst, (add GPR:$src1, GPR:$src2))]>;
 
   // SUB: dst = src1 - src2 (legacy 3-operand form)
   // Expands to: LDA src1; SEC; SBC src2; STA dst
   def SUB_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "# sub $dst, $src1, $src2",
-                       []>;  // Pattern removed - use SUBR_DP
+                      "# sub $dst, $src1, $src2",
+                      [(set GPR:$dst, (sub GPR:$src1, GPR:$src2))]>;
 
   // AND: dst = src1 & src2 (legacy 3-operand form)
   // Expands to: LDA src1; AND src2; STA dst
@@ -221,13 +244,13 @@ let isCodeGenOnly = 1, Defs = [A] in {
 
   // ADD immediate (legacy) - patterns removed, use ADDR_IMM
   def ADDI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                        "# addi $dst, $src, $imm",
-                        []>;
+                       "# addi $dst, $src, $imm",
+                       [(set GPR:$dst, (add GPR:$src, imm:$imm))]>;
 
   // SUB immediate (legacy) - patterns removed, use SUBR_IMM
   def SUBI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                        "# subi $dst, $src, $imm",
-                        []>;
+                       "# subi $dst, $src, $imm",
+                       [(set GPR:$dst, (sub GPR:$src, imm:$imm))]>;
 
   // AND immediate (legacy) - patterns removed, use ANDR_IMM
   def ANDI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
@@ -329,14 +352,14 @@ let Defs = [SR] in {
   // ADD (via ADC): dest = dest + src
   def ADDR_DP : FE8_DP<0x82, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "ADC.L\t$dst,$src2",
-                       [(set GPR:$dst, (add GPR:$src1, GPR:$src2))]> {
+                       []> {
     let Constraints = "$src1 = $dst";
   }
 
   // SUB (via SBC): dest = dest - src
   def SUBR_DP : FE8_DP<0x83, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "SBC.L\t$dst,$src2",
-                       [(set GPR:$dst, (sub GPR:$src1, GPR:$src2))]> {
+                       []> {
     let Constraints = "$src1 = $dst";
   }
 
@@ -365,22 +388,25 @@ let Defs = [SR] in {
   def CMPR_DP : FE8_DP<0x87, (outs), (ins GPR:$lhs, GPR:$rhs),
                        "CMP.L\t$lhs,$rhs",
                        [(M65832cmp GPR:$lhs, GPR:$rhs)]>;
+}
 
-  // MOV (via LD): dest = src
-  def MOVR_DP : FE8_DP<0x80, (outs GPR:$dst), (ins GPR:$src),
-                       "LD.L\t$dst,$src",
-                       []>;
+// MOV (via LD): dest = src - does NOT set flags in 32-bit mode
+def MOVR_DP : FE8_DP<0x80, (outs GPR:$dst), (ins GPR:$src),
+                     "LD.L\t$dst,$src",
+                     []>;
+
+let Defs = [SR] in {
 
   // Immediate forms (Mode=$2)
   def ADDR_IMM : FE8_IMM<0x82, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                          "ADC.L\t$dst,#$imm",
-                         [(set GPR:$dst, (add GPR:$src, imm:$imm))]> {
+                         []> {
     let Constraints = "$src = $dst";
   }
 
   def SUBR_IMM : FE8_IMM<0x83, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                          "SBC.L\t$dst,#$imm",
-                         [(set GPR:$dst, (sub GPR:$src, imm:$imm))]> {
+                         []> {
     let Constraints = "$src = $dst";
   }
 
@@ -405,12 +431,12 @@ let Defs = [SR] in {
   def CMPR_IMM : FE8_IMM<0x87, (outs), (ins GPR:$lhs, i32imm:$rhs),
                          "CMP.L\t$lhs,#$rhs",
                          [(M65832cmp GPR:$lhs, imm:$rhs)]>;
-
-  // Load immediate into register
-  def LDR_IMM : FE8_IMM<0x80, (outs GPR:$dst), (ins i32imm:$imm),
-                        "LD.L\t$dst,#$imm",
-                        [(set GPR:$dst, imm:$imm)]>;
 }
+
+// Load immediate into register - does NOT set flags in 32-bit mode
+def LDR_IMM : FE8_IMM<0x80, (outs GPR:$dst), (ins i32imm:$imm),
+                      "LD.L\t$dst,#$imm",
+                      [(set GPR:$dst, imm:$imm)]>;
 
 //===----------------------------------------------------------------------===//
 // Barrel Shifter Instructions ($02 $98)
@@ -890,18 +916,19 @@ def TXS : F0<0x9A, (outs), (ins XREG:$src), "TXS", []> { let Defs = [SP]; }
 // Branch Instructions
 //===----------------------------------------------------------------------===//
 
+// Branch Instructions - 16-bit relative offset in 32-bit mode (3 bytes)
 let isBranch = 1, isTerminator = 1 in {
-  def BEQ : F5<0xF0, (outs), (ins brtarget:$target), "BEQ\t$target", []> { let Uses = [SR]; }
-  def BNE : F5<0xD0, (outs), (ins brtarget:$target), "BNE\t$target", []> { let Uses = [SR]; }
-  def BCS : F5<0xB0, (outs), (ins brtarget:$target), "BCS\t$target", []> { let Uses = [SR]; }
-  def BCC : F5<0x90, (outs), (ins brtarget:$target), "BCC\t$target", []> { let Uses = [SR]; }
-  def BMI : F5<0x30, (outs), (ins brtarget:$target), "BMI\t$target", []> { let Uses = [SR]; }
-  def BPL : F5<0x10, (outs), (ins brtarget:$target), "BPL\t$target", []> { let Uses = [SR]; }
-  def BVS : F5<0x70, (outs), (ins brtarget:$target), "BVS\t$target", []> { let Uses = [SR]; }
-  def BVC : F5<0x50, (outs), (ins brtarget:$target), "BVC\t$target", []> { let Uses = [SR]; }
+  def BEQ : F6<0xF0, (outs), (ins brtarget:$target), "BEQ\t$target", []> { let Uses = [SR]; }
+  def BNE : F6<0xD0, (outs), (ins brtarget:$target), "BNE\t$target", []> { let Uses = [SR]; }
+  def BCS : F6<0xB0, (outs), (ins brtarget:$target), "BCS\t$target", []> { let Uses = [SR]; }
+  def BCC : F6<0x90, (outs), (ins brtarget:$target), "BCC\t$target", []> { let Uses = [SR]; }
+  def BMI : F6<0x30, (outs), (ins brtarget:$target), "BMI\t$target", []> { let Uses = [SR]; }
+  def BPL : F6<0x10, (outs), (ins brtarget:$target), "BPL\t$target", []> { let Uses = [SR]; }
+  def BVS : F6<0x70, (outs), (ins brtarget:$target), "BVS\t$target", []> { let Uses = [SR]; }
+  def BVC : F6<0x50, (outs), (ins brtarget:$target), "BVC\t$target", []> { let Uses = [SR]; }
   
   let isBarrier = 1 in
-  def BRA : F5<0x80, (outs), (ins brtarget:$target), "BRA\t$target",
+  def BRA : F6<0x80, (outs), (ins brtarget:$target), "BRA\t$target",
               [(br bb:$target)]>;
 }
 
@@ -916,12 +943,26 @@ let isCodeGenOnly = 1, isBranch = 1, isTerminator = 1 in {
 }
 
 // Pseudo for conditional select - expanded in expandPostRAPseudo
-// dst = (cc) ? trueVal : falseVal
+// dst = (lhs cc rhs) ? trueVal : falseVal
+// Includes LHS/RHS so we can emit CMP inside the expansion, ensuring
+// each select has its own comparison (flags can be clobbered between selects)
 let isCodeGenOnly = 1 in {
   def SELECT_CC_PSEUDO : Pseudo<(outs GPR:$dst), 
-                                (ins GPR:$trueVal, GPR:$falseVal, i32imm:$cc),
-                                "# select_cc $dst, $trueVal, $falseVal, $cc",
-                                [(set GPR:$dst, (M65832selectcc GPR:$trueVal, GPR:$falseVal, imm:$cc))]> {
+                                (ins GPR:$lhs, GPR:$rhs, GPR:$trueVal, GPR:$falseVal, i32imm:$cc),
+                                "# select_cc $dst, $lhs, $rhs, $trueVal, $falseVal, $cc",
+                                [(set GPR:$dst, (M65832selectcc GPR:$lhs, GPR:$rhs, 
+                                                                GPR:$trueVal, GPR:$falseVal,
+                                                                imm:$cc))]> {
+    let Defs = [A, SR];
+  }
+  
+  // FP version - uses glue from FCMP, doesn't include comparison operands
+  // FP operations don't have the flag-clobbering issue that integer ops do
+  def SELECT_CC_FP_PSEUDO : Pseudo<(outs GPR:$dst), 
+                                   (ins GPR:$trueVal, GPR:$falseVal, i32imm:$cc),
+                                   "# select_cc_fp $dst, $trueVal, $falseVal, $cc",
+                                   [(set GPR:$dst, (M65832selectccfp GPR:$trueVal, GPR:$falseVal,
+                                                                     imm:$cc))]> {
     let Uses = [SR];
     let Defs = [A];
   }
@@ -1064,6 +1105,30 @@ def DIVU_DP : F7_DP<0x05, (outs ACC:$dst, TREG:$rem), (ins ACC:$src1, DPOp:$src2
   let Defs = [SR, T];
 }
 
+// Multiply/Divide Pseudo Instructions for GPR operands
+// These expand via expandPostRAPseudo to: LDA src1; MUL/DIV src2; STA dst
+let isCodeGenOnly = 1 in {
+  def MUL_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "# mul $dst, $src1, $src2",
+                       [(set GPR:$dst, (mul GPR:$src1, GPR:$src2))]>;
+  
+  def SDIV_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                        "# sdiv $dst, $src1, $src2",
+                        [(set GPR:$dst, (sdiv GPR:$src1, GPR:$src2))]>;
+  
+  def UDIV_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                        "# udiv $dst, $src1, $src2",
+                        [(set GPR:$dst, (udiv GPR:$src1, GPR:$src2))]>;
+  
+  def SREM_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                        "# srem $dst, $src1, $src2",
+                        [(set GPR:$dst, (srem GPR:$src1, GPR:$src2))]>;
+  
+  def UREM_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                        "# urem $dst, $src1, $src2",
+                        [(set GPR:$dst, (urem GPR:$src1, GPR:$src2))]>;
+}
+
 // CAS - Compare and Swap
 // if [dp] == X then [dp] = A, Z=1 else X = [dp], Z=0
 def CAS_DP : F7_DP<0x10, (outs), (ins ACC:$new, XREG:$expected, DPOp:$addr),
@@ -1113,6 +1178,368 @@ def TRAP : F7_Imm8<0x40, (outs), (ins imm8:$code), "trap\t#$code", []> {
 //===----------------------------------------------------------------------===//
 
 def NOP : F0<0xEA, (outs), (ins), "nop", []>;
+
+//===----------------------------------------------------------------------===//
+// FPU Instructions
+//
+// The M65832 FPU has sixteen 64-bit registers (F0-F15) with two-operand
+// destructive operations: Fd = Fd op Fs
+//
+// Encoding: $02 [opcode] [reg-byte]
+//   reg-byte: DDDD SSSS (dest in high nibble, src in low nibble)
+//
+// All FPU instructions use the $02 extended opcode prefix.
+// FPU is always enabled (hard-float ABI).
+//===----------------------------------------------------------------------===//
+
+// FPU instructions - always available (no predicate)
+
+// FPU Load/Store Pseudo Instructions (with patterns for instruction selection)
+// These expand to actual LDF/STF instructions in the code emitter
+
+// f32 load from global address
+let isCodeGenOnly = 1, mayLoad = 1 in {
+  def LDF32_GLOBAL : Pseudo<(outs FPR32:$dst), (ins i32imm:$addr),
+                            "# ldf32 $dst, $addr",
+                            [(set FPR32:$dst, (load (M65832Wrapper tglobaladdr:$addr)))]>;
+  
+  def LDF32 : Pseudo<(outs FPR32:$dst), (ins memsrc:$addr),
+                     "# ldf32 $dst, $addr",
+                     [(set FPR32:$dst, (load ADDRri:$addr))]>;
+}
+
+// f32 store to global address
+let isCodeGenOnly = 1, mayStore = 1 in {
+  def STF32_GLOBAL : Pseudo<(outs), (ins FPR32:$src, i32imm:$addr),
+                            "# stf32 $src, $addr",
+                            [(store FPR32:$src, (M65832Wrapper tglobaladdr:$addr))]>;
+  
+  def STF32 : Pseudo<(outs), (ins FPR32:$src, memsrc:$addr),
+                     "# stf32 $src, $addr",
+                     [(store FPR32:$src, ADDRri:$addr)]>;
+}
+
+// f64 load from global address
+let isCodeGenOnly = 1, mayLoad = 1 in {
+  def LDF64_GLOBAL : Pseudo<(outs FPR64:$dst), (ins i32imm:$addr),
+                            "# ldf64 $dst, $addr",
+                            [(set FPR64:$dst, (load (M65832Wrapper tglobaladdr:$addr)))]>;
+  
+  def LDF64 : Pseudo<(outs FPR64:$dst), (ins memsrc:$addr),
+                     "# ldf64 $dst, $addr",
+                     [(set FPR64:$dst, (load ADDRri:$addr))]>;
+}
+
+// f64 store to global address
+let isCodeGenOnly = 1, mayStore = 1 in {
+  def STF64_GLOBAL : Pseudo<(outs), (ins FPR64:$src, i32imm:$addr),
+                            "# stf64 $src, $addr",
+                            [(store FPR64:$src, (M65832Wrapper tglobaladdr:$addr))]>;
+  
+  def STF64 : Pseudo<(outs), (ins FPR64:$src, memsrc:$addr),
+                     "# stf64 $src, $addr",
+                     [(store FPR64:$src, ADDRri:$addr)]>;
+}
+
+// Physical FPU Load/Store instructions (for assembly)
+def LDF_dp : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$dst);
+  let InOperandList = (ins memsrc:$addr);
+  let AsmString = "LDF\t$dst, $addr";
+  let Pattern = [];
+  let Size = 4;  // $02 $B0 $0n dp
+  let mayLoad = 1;
+}
+
+def LDF_abs : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$dst);
+  let InOperandList = (ins i32imm:$addr);
+  let AsmString = "LDF\t$dst, B+$addr";
+  let Pattern = [];
+  let Size = 5;  // $02 $B1 $0n abs16
+  let mayLoad = 1;
+}
+
+def STF_dp : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR64:$src, memsrc:$addr);
+  let AsmString = "STF\t$src, $addr";
+  let Pattern = [];
+  let Size = 4;  // $02 $B2 $0n dp
+  let mayStore = 1;
+}
+
+def STF_abs : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR64:$src, i32imm:$addr);
+  let AsmString = "STF\t$src, B+$addr";
+  let Pattern = [];
+  let Size = 5;  // $02 $B3 $0n abs16
+  let mayStore = 1;
+}
+
+// Register-indirect FPU Load/Store: LDF Fn, (Rm) / STF Fn, (Rm)
+// Encoding: $02 $B4 $nm (load) / $02 $B5 $nm (store)
+// where n = FPU reg (0-15), m = GPR reg number / 4 (for DP offset mapping)
+
+let isCodeGenOnly = 1 in {
+def LDF_ind : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$dst);
+  let InOperandList = (ins GPR:$addr);
+  let AsmString = "LDF\t$dst, ($addr)";
+  let Pattern = [];
+  let Size = 3;  // $02 $B4 $nm
+  let mayLoad = 1;
+}
+
+def STF_ind : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR64:$src, GPR:$addr);
+  let AsmString = "STF\t$src, ($addr)";
+  let Pattern = [];
+  let Size = 3;  // $02 $B5 $nm
+  let mayStore = 1;
+}
+
+// Single-precision register-indirect: LDF.S Fn, (Rm) / STF.S Fn, (Rm)
+// Encoding: $02 $BA $nm (load) / $02 $BB $nm (store)
+// These load/store only 32-bit single precision floats
+
+def LDF_S_ind : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR32:$dst);
+  let InOperandList = (ins GPR:$addr);
+  let AsmString = "LDF.S\t$dst, ($addr)";
+  let Pattern = [];
+  let Size = 3;  // $02 $BA $nm
+  let mayLoad = 1;
+}
+
+def STF_S_ind : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR32:$src, GPR:$addr);
+  let AsmString = "STF.S\t$src, ($addr)";
+  let Pattern = [];
+  let Size = 3;  // $02 $BB $nm
+  let mayStore = 1;
+}
+}
+
+// FPU Arithmetic - two-operand destructive format: Fd = Fd op Fs
+// Encoding: $02 [opcode] [ds] where ds = (d << 4) | s
+
+// Binary arithmetic: Fd = Fd op Fs (two-address form)
+class FPU_BinArith<bits<8> op, string asm, SDNode OpNode, ValueType vt,
+                   RegisterClass RC>
+  : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs RC:$dst);
+  let InOperandList = (ins RC:$Fd, RC:$Fs);
+  let AsmString = !strconcat(asm, "\t$dst, $Fs");
+  let Pattern = [(set RC:$dst, (OpNode RC:$Fd, RC:$Fs))];
+  let Size = 3;  // $02 opcode reg-byte
+  let Constraints = "$Fd = $dst";
+}
+
+// Unary operations: Fd = op(Fs)
+class FPU_Unary<bits<8> op, string asm, SDNode OpNode, ValueType vt,
+                RegisterClass RC>
+  : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs RC:$dst);
+  let InOperandList = (ins RC:$Fs);
+  let AsmString = !strconcat(asm, "\t$dst, $Fs");
+  let Pattern = [(set RC:$dst, (OpNode RC:$Fs))];
+  let Size = 3;
+}
+
+// Compare: sets flags based on Fd - Fs
+class FPU_Cmp<bits<8> op, string asm, RegisterClass RC, ValueType vt>
+  : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins RC:$Fd, RC:$Fs);
+  let AsmString = !strconcat(asm, "\t$Fd, $Fs");
+  let Pattern = [(M65832fcmp (vt RC:$Fd), RC:$Fs)];
+  let Size = 3;
+  let Defs = [SR];
+  let isCompare = 1;
+}
+
+// Move: Fd = Fs (copy)
+class FPU_Mov<bits<8> op, string asm, RegisterClass RC>
+  : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs RC:$dst);
+  let InOperandList = (ins RC:$src);
+  let AsmString = !strconcat(asm, "\t$dst, $src");
+  let Pattern = [];
+  let Size = 3;
+}
+
+// Float to integer pseudo: dst = (int)Fd
+// Hardware: F2I.S Fd puts result in A, then we store to GPR
+class FPU_F2I<bits<8> op, string asm, RegisterClass RC, ValueType vt>
+  : Pseudo<(outs GPR:$dst), (ins RC:$Fd),
+           !strconcat("# f2i ", asm, " $dst, $Fd"),
+           [(set GPR:$dst, (fp_to_sint RC:$Fd))]> {
+  let isCodeGenOnly = 1;
+  let Defs = [A, SR];
+}
+
+// Integer to float pseudo: Fd = (float)src
+// Hardware: Load src to A, then I2F.S Fd reads from A
+class FPU_I2F<bits<8> op, string asm, RegisterClass RC, ValueType vt>
+  : Pseudo<(outs RC:$dst), (ins GPR:$src),
+           !strconcat("# i2f ", asm, " $dst, $src"),
+           [(set RC:$dst, (sint_to_fp GPR:$src))]> {
+  let isCodeGenOnly = 1;
+  let Defs = [A];
+}
+
+// Physical F2I instruction (single operand, result in A)
+def F2I_S_real : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR32:$Fd);
+  let AsmString = "F2I.S\t$Fd";
+  let Pattern = [];
+  let Size = 3;
+  let Defs = [A, SR];
+  let isCodeGenOnly = 1;
+}
+
+def F2I_D_real : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR64:$Fd);
+  let AsmString = "F2I.D\t$Fd";
+  let Pattern = [];
+  let Size = 3;
+  let Defs = [A, SR];
+  let isCodeGenOnly = 1;
+}
+
+// Physical I2F instruction (single operand, source from A)
+def I2F_S_real : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR32:$Fd);
+  let InOperandList = (ins);
+  let AsmString = "I2F.S\t$Fd";
+  let Pattern = [];
+  let Size = 3;
+  let Uses = [A];
+  let isCodeGenOnly = 1;
+}
+
+def I2F_D_real : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$Fd);
+  let InOperandList = (ins);
+  let AsmString = "I2F.D\t$Fd";
+  let Pattern = [];
+  let Size = 3;
+  let Uses = [A];
+  let isCodeGenOnly = 1;
+}
+
+// Single-precision FPU instructions ($C0-$CA)
+def FADD_S : FPU_BinArith<0xC0, "FADD.S", fadd, f32, FPR32>;
+def FSUB_S : FPU_BinArith<0xC1, "FSUB.S", fsub, f32, FPR32>;
+def FMUL_S : FPU_BinArith<0xC2, "FMUL.S", fmul, f32, FPR32>;
+def FDIV_S : FPU_BinArith<0xC3, "FDIV.S", fdiv, f32, FPR32>;
+def FNEG_S : FPU_Unary<0xC4, "FNEG.S", fneg, f32, FPR32>;
+def FABS_S : FPU_Unary<0xC5, "FABS.S", fabs, f32, FPR32>;
+def FCMP_S : FPU_Cmp<0xC6, "FCMP.S", FPR32, f32>;
+def F2I_S  : FPU_F2I<0xC7, "F2I.S", FPR32, f32>;
+def I2F_S  : FPU_I2F<0xC8, "I2F.S", FPR32, f32>;
+def FMOV_S : FPU_Mov<0xC9, "FMOV.S", FPR32>;
+def FSQRT_S : FPU_Unary<0xCA, "FSQRT.S", fsqrt, f32, FPR32>;
+
+// Double-precision FPU instructions ($D0-$DA)
+def FADD_D : FPU_BinArith<0xD0, "FADD.D", fadd, f64, FPR64>;
+def FSUB_D : FPU_BinArith<0xD1, "FSUB.D", fsub, f64, FPR64>;
+def FMUL_D : FPU_BinArith<0xD2, "FMUL.D", fmul, f64, FPR64>;
+def FDIV_D : FPU_BinArith<0xD3, "FDIV.D", fdiv, f64, FPR64>;
+def FNEG_D : FPU_Unary<0xD4, "FNEG.D", fneg, f64, FPR64>;
+def FABS_D : FPU_Unary<0xD5, "FABS.D", fabs, f64, FPR64>;
+def FCMP_D : FPU_Cmp<0xD6, "FCMP.D", FPR64, f64>;
+def F2I_D  : FPU_F2I<0xD7, "F2I.D", FPR64, f64>;
+def I2F_D  : FPU_I2F<0xD8, "I2F.D", FPR64, f64>;
+def FMOV_D : FPU_Mov<0xD9, "FMOV.D", FPR64>;
+def FSQRT_D : FPU_Unary<0xDA, "FSQRT.D", fsqrt, f64, FPR64>;
+
+// FPU Register transfers ($E0-$E5)
+// FTOA: A = low 32 bits of Fd
+def FTOA : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs GPR:$dst);
+  let InOperandList = (ins FPR64:$Fd);
+  let AsmString = "FTOA\t$Fd";
+  let Pattern = [];
+  let Size = 3;
+}
+
+// FTOT: T = high 32 bits of Fd
+def FTOT : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR64:$Fd);
+  let AsmString = "FTOT\t$Fd";
+  let Pattern = [];
+  let Size = 3;
+  let Defs = [T];
+}
+
+// ATOF: low 32 bits of Fd = A
+def ATOF : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$dst);
+  let InOperandList = (ins FPR64:$Fd, GPR:$src);
+  let AsmString = "ATOF\t$dst";
+  let Pattern = [];
+  let Size = 3;
+  let Constraints = "$Fd = $dst";
+}
+
+// TTOF: high 32 bits of Fd = T  
+def TTOF : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$dst);
+  let InOperandList = (ins FPR64:$Fd);
+  let AsmString = "TTOF\t$dst";
+  let Pattern = [];
+  let Size = 3;
+  let Uses = [T];
+  let Constraints = "$Fd = $dst";
+}
+
+// FCVT.DS: Fd = (double)Fs (single to double conversion)
+def FCVT_DS : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR64:$dst);
+  let InOperandList = (ins FPR32:$Fs);
+  let AsmString = "FCVT.DS\t$dst, $Fs";
+  let Pattern = [(set FPR64:$dst, (fpextend FPR32:$Fs))];
+  let Size = 3;
+}
+
+// FCVT.SD: Fd = (single)Fs (double to single conversion)
+def FCVT_SD : Instruction {
+  let Namespace = "M65832";
+  let OutOperandList = (outs FPR32:$dst);
+  let InOperandList = (ins FPR64:$Fs);
+  let AsmString = "FCVT.SD\t$dst, $Fs";
+  let Pattern = [(set FPR32:$dst, (fpround FPR64:$Fs))];
+  let Size = 3;
+}
 
 //===----------------------------------------------------------------------===//
 // Pattern Matching

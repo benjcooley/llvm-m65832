@@ -54,14 +54,20 @@ namespace M65832ISD {
     // Subroutine call
     CALL,
     
-    // Compare (sets flags)
+    // Compare (sets flags) - integer
     CMP,
+    
+    // FP Compare (sets flags) - floating point  
+    FCMP,
     
     // Branch on condition code
     BR_CC,
     
-    // Select on condition code
+    // Select on condition code (integer - includes LHS/RHS for CMP)
     SELECT_CC,
+    
+    // Select on condition code (FP - uses glue from FCMP)
+    SELECT_CC_FP,
     
     // Global/constant address wrapper
     WRAPPER,
