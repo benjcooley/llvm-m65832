@@ -363,42 +363,62 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
 
   case M65832::ADD_GPR: {
-    // ADD: LDA src1; CLC; ADC src2; STA dst
+    // ADD: dst = src1 + src2 using extended ALU (with CLC)
     Register DstReg = MI.getOperand(0).getReg();
     Register Src1Reg = MI.getOperand(1).getReg();
     Register Src2Reg = MI.getOperand(2).getReg();
-    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
-    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
-    BuildMI(MBB, MI, DL, get(M65832::CLC));
-    BuildMI(MBB, MI, DL, get(M65832::ADC_DP), M65832::A)
-        .addReg(M65832::A)
-        .addImm(Src2DP);
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
+    if (DstReg == Src2Reg && DstReg != Src1Reg) {
+      // Avoid clobbering src2: use accumulator form.
+      unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+      unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
+      unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+      BuildMI(MBB, MI, DL, get(M65832::CLC));
+      BuildMI(MBB, MI, DL, get(M65832::ADC_DP), M65832::A)
+          .addReg(M65832::A)
+          .addImm(Src2DP);
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(DstDP);
+    } else {
+      if (DstReg != Src1Reg) {
+        BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(Src1Reg);
+      }
+      BuildMI(MBB, MI, DL, get(M65832::CLC));
+      BuildMI(MBB, MI, DL, get(M65832::ADDR_DP), DstReg)
+          .addReg(DstReg)
+          .addReg(Src2Reg);
+    }
     break;
   }
 
   case M65832::SUB_GPR: {
-    // SUB: LDA src1; SEC; SBC src2; STA dst
+    // SUB: dst = src1 - src2 using extended ALU (with SEC)
     Register DstReg = MI.getOperand(0).getReg();
     Register Src1Reg = MI.getOperand(1).getReg();
     Register Src2Reg = MI.getOperand(2).getReg();
-    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
-    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
-    BuildMI(MBB, MI, DL, get(M65832::SEC));
-    BuildMI(MBB, MI, DL, get(M65832::SBC_DP), M65832::A)
-        .addReg(M65832::A)
-        .addImm(Src2DP);
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
+    if (DstReg == Src2Reg && DstReg != Src1Reg) {
+      // Avoid clobbering src2: use accumulator form.
+      unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+      unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
+      unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+      BuildMI(MBB, MI, DL, get(M65832::SEC));
+      BuildMI(MBB, MI, DL, get(M65832::SBC_DP), M65832::A)
+          .addReg(M65832::A)
+          .addImm(Src2DP);
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(DstDP);
+    } else {
+      if (DstReg != Src1Reg) {
+        BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(Src1Reg);
+      }
+      BuildMI(MBB, MI, DL, get(M65832::SEC));
+      BuildMI(MBB, MI, DL, get(M65832::SUBR_DP), DstReg)
+          .addReg(DstReg)
+          .addReg(Src2Reg);
+    }
     break;
   }
 
@@ -460,40 +480,32 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
 
   case M65832::ADDI_GPR: {
-    // ADD immediate: LDA src; CLC; ADC #imm; STA dst
+    // ADD immediate: dst = src + imm using extended ALU (with CLC)
     Register DstReg = MI.getOperand(0).getReg();
     Register SrcReg = MI.getOperand(1).getReg();
     int64_t Imm = MI.getOperand(2).getImm();
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    if (DstReg != SrcReg) {
+      BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(SrcReg);
+    }
     BuildMI(MBB, MI, DL, get(M65832::CLC));
-    BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-        .addReg(M65832::A)
+    BuildMI(MBB, MI, DL, get(M65832::ADDR_IMM), DstReg)
+        .addReg(DstReg)
         .addImm(Imm);
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
     break;
   }
 
   case M65832::SUBI_GPR: {
-    // SUB immediate: LDA src; SEC; SBC #imm; STA dst
+    // SUB immediate: dst = src - imm using extended ALU (with SEC)
     Register DstReg = MI.getOperand(0).getReg();
     Register SrcReg = MI.getOperand(1).getReg();
     int64_t Imm = MI.getOperand(2).getImm();
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    if (DstReg != SrcReg) {
+      BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(SrcReg);
+    }
     BuildMI(MBB, MI, DL, get(M65832::SEC));
-    BuildMI(MBB, MI, DL, get(M65832::SBC_IMM), M65832::A)
-        .addReg(M65832::A)
+    BuildMI(MBB, MI, DL, get(M65832::SUBR_IMM), DstReg)
+        .addReg(DstReg)
         .addImm(Imm);
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
     break;
   }
 
@@ -637,15 +649,17 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       unsigned BaseDP = getDPOffset(29);
       if (BaseReg == M65832::SP) {
         // Save A, compute address, store
+        // Note: PHA lowers SP by 4 (32-bit push), so we must add 4 to offset
+        // to compensate: effective_addr = (SP - 4) + (Offset + 4) = SP + Offset
         BuildMI(MBB, MI, DL, get(M65832::PHA)).addReg(M65832::A);
         BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
         BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
-        if (Offset != 0) {
-          BuildMI(MBB, MI, DL, get(M65832::CLC));
-          BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-              .addReg(M65832::A)
-              .addImm(Offset);
-        }
+        // Always add (Offset + 4) to compensate for PHA
+        int64_t AdjustedOffset = Offset + 4;
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(AdjustedOffset);
         BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
         BuildMI(MBB, MI, DL, get(M65832::PLA), M65832::A);
         BuildMI(MBB, MI, DL, get(M65832::STA_ABS_X))
@@ -678,6 +692,212 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
         .addReg(M65832::A, RegState::Kill)
         .add(MI.getOperand(1)); // Copy the global address operand
+    break;
+  }
+
+  // FPU Load/Store pseudo expansions
+  // FPU supports: LDF Fn, dp | LDF Fn, abs | LDF Fn, (Rm)
+  
+  case M65832::LDF32_GLOBAL:
+  case M65832::LDF64_GLOBAL: {
+    // Load float from global address into FPU register
+    // Note: Using 64-bit LDF_abs for both f32/f64 until assembler supports LDF.S
+    Register DstReg = MI.getOperand(0).getReg();
+    
+    // TODO: Use LDF_S_ind for f32 when assembler properly supports LDF.S
+    // For now, use LDF_abs which loads 64 bits (but we only use low 32 for f32)
+    BuildMI(MBB, MI, DL, get(M65832::LDF_abs), DstReg)
+        .add(MI.getOperand(1)); // The global address symbol
+    break;
+  }
+
+  case M65832::LDF32:
+  case M65832::LDF64: {
+    // Load float from memory (base+offset) into FPU register
+    // Use register-indirect mode: LDF Fn, (Rm) - but Rm must be R0-R15!
+    // Note: Using 64-bit LDF for both f32/f64 until assembler supports LDF.S properly
+    // The FPU handles the correct size based on arithmetic instructions (.S vs .D)
+    Register DstReg = MI.getOperand(0).getReg();
+    Register BaseReg = MI.getOperand(1).getReg();
+    int64_t Offset = 0;
+    if (MI.getNumOperands() > 2 && MI.getOperand(2).isImm()) {
+      Offset = MI.getOperand(2).getImm();
+    }
+    
+    // TODO: Use LDF_S_ind for f32 when assembler properly supports LDF.S
+    // bool IsSingle = (MI.getOpcode() == M65832::LDF32);
+    // unsigned LoadOpc = IsSingle ? M65832::LDF_S_ind : M65832::LDF_ind;
+    unsigned LoadOpc = M65832::LDF_ind;
+    
+    // Check if BaseReg is in R0-R15 range (required for LDF/STF indirect)
+    bool BaseIsLowReg = (BaseReg >= M65832::R0 && BaseReg <= M65832::R15);
+    
+    if (Offset == 0 && BaseIsLowReg) {
+      // Simple case: LDF Fn, (Rm) with R0-R15
+      BuildMI(MBB, MI, DL, get(LoadOpc), DstReg)
+          .addReg(BaseReg);
+    } else {
+      // Need to compute address and/or copy to low register
+      // Load base address into A
+      if (BaseReg == M65832::SP) {
+        // Stack pointer: TSX; TXA
+        BuildMI(MBB, MI, DL, get(M65832::TSX));
+        BuildMI(MBB, MI, DL, get(M65832::TXA));
+      } else if (BaseIsLowReg) {
+        // R0-R15: LDA via direct page
+        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(BaseDP);
+      } else {
+        // High register (R16+): use extended direct page addressing
+        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(BaseDP);
+      }
+      
+      // Add offset if non-zero
+      if (Offset != 0) {
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(Offset);
+      }
+      
+      // Store computed address to R0 (temp)
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(getDPOffset(0)); // R0
+      // Now load from address in R0
+      BuildMI(MBB, MI, DL, get(LoadOpc), DstReg)
+          .addReg(M65832::R0);
+    }
+    break;
+  }
+
+  case M65832::STF32_GLOBAL:
+  case M65832::STF64_GLOBAL: {
+    // Store float from FPU register to global address
+    // Note: Using 64-bit STF_abs for both f32/f64 until assembler supports STF.S
+    Register SrcReg = MI.getOperand(0).getReg();
+    
+    // TODO: Use STF_S_ind for f32 when assembler properly supports STF.S
+    BuildMI(MBB, MI, DL, get(M65832::STF_abs))
+        .addReg(SrcReg)
+        .add(MI.getOperand(1)); // The global address symbol
+    break;
+  }
+
+  case M65832::STF32:
+  case M65832::STF64: {
+    // Store float from FPU register to memory (base+offset)
+    // Use register-indirect mode: STF Fn, (Rm) - but Rm must be R0-R15!
+    // Note: Using 64-bit STF for both f32/f64 until assembler supports STF.S properly
+    Register SrcReg = MI.getOperand(0).getReg();
+    Register BaseReg = MI.getOperand(1).getReg();
+    int64_t Offset = 0;
+    if (MI.getNumOperands() > 2 && MI.getOperand(2).isImm()) {
+      Offset = MI.getOperand(2).getImm();
+    }
+    
+    // TODO: Use STF_S_ind for f32 when assembler properly supports STF.S
+    // bool IsSingle = (MI.getOpcode() == M65832::STF32);
+    // unsigned StoreOpc = IsSingle ? M65832::STF_S_ind : M65832::STF_ind;
+    unsigned StoreOpc = M65832::STF_ind;
+    
+    // Check if BaseReg is in R0-R15 range (required for LDF/STF indirect)
+    bool BaseIsLowReg = (BaseReg >= M65832::R0 && BaseReg <= M65832::R15);
+    
+    if (Offset == 0 && BaseIsLowReg) {
+      // Simple case: STF Fn, (Rm) with R0-R15
+      BuildMI(MBB, MI, DL, get(StoreOpc))
+          .addReg(SrcReg)
+          .addReg(BaseReg);
+    } else {
+      // Need to compute address and/or copy to low register
+      // Load base address into A
+      if (BaseReg == M65832::SP) {
+        // Stack pointer: TSX; TXA
+        BuildMI(MBB, MI, DL, get(M65832::TSX));
+        BuildMI(MBB, MI, DL, get(M65832::TXA));
+      } else if (BaseIsLowReg) {
+        // R0-R15: LDA via direct page
+        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(BaseDP);
+      } else {
+        // High register (R16+): use extended direct page addressing
+        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(BaseDP);
+      }
+      
+      // Add offset if non-zero
+      if (Offset != 0) {
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(Offset);
+      }
+      
+      // Store computed address to R0 (temp)
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(getDPOffset(0)); // R0
+      // Now store to address in R0
+      BuildMI(MBB, MI, DL, get(StoreOpc))
+          .addReg(SrcReg)
+          .addReg(M65832::R0);
+    }
+    break;
+  }
+
+  // FPU Float-to-Integer conversion pseudos
+  // F2I.S Fd puts result in A, then store to GPR
+  case M65832::F2I_S: {
+    Register DstReg = MI.getOperand(0).getReg();
+    Register SrcFPR = MI.getOperand(1).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+    
+    // F2I.S Fd - converts Fd to int, result in A
+    BuildMI(MBB, MI, DL, get(M65832::F2I_S_real))
+        .addReg(SrcFPR);
+    // Store A to destination GPR
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
+  case M65832::F2I_D: {
+    Register DstReg = MI.getOperand(0).getReg();
+    Register SrcFPR = MI.getOperand(1).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+    
+    BuildMI(MBB, MI, DL, get(M65832::F2I_D_real))
+        .addReg(SrcFPR);
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
+  // FPU Integer-to-Float conversion pseudos
+  // Load GPR to A, then I2F.S Fd reads from A
+  case M65832::I2F_S: {
+    Register DstFPR = MI.getOperand(0).getReg();
+    Register SrcReg = MI.getOperand(1).getReg();
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+    
+    // Load source GPR into A
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    // I2F.S Fd - converts A to float in Fd
+    BuildMI(MBB, MI, DL, get(M65832::I2F_S_real), DstFPR);
+    break;
+  }
+
+  case M65832::I2F_D: {
+    Register DstFPR = MI.getOperand(0).getReg();
+    Register SrcReg = MI.getOperand(1).getReg();
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+    
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    BuildMI(MBB, MI, DL, get(M65832::I2F_D_real), DstFPR);
     break;
   }
 
@@ -803,28 +1023,21 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
 
   case M65832::CMP_GPR: {
-    // Compare two GPRs: LDA lhs; CMP rhs
+    // Compare two GPRs directly: CMP.L lhs, rhs
     Register LhsReg = MI.getOperand(0).getReg();
     Register RhsReg = MI.getOperand(1).getReg();
-    unsigned LhsDP = getDPOffset(LhsReg - M65832::R0);
-    unsigned RhsDP = getDPOffset(RhsReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(LhsDP);
-    BuildMI(MBB, MI, DL, get(M65832::CMP_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(RhsDP);
+    BuildMI(MBB, MI, DL, get(M65832::CMPR_DP))
+        .addReg(LhsReg)
+        .addReg(RhsReg);
     break;
   }
 
   case M65832::CMP_GPR_IMM: {
-    // Compare GPR with immediate: LDA lhs; CMP #imm
+    // Compare GPR with immediate: CMP.L lhs, #imm
     Register LhsReg = MI.getOperand(0).getReg();
     int64_t Imm = MI.getOperand(1).getImm();
-    unsigned LhsDP = getDPOffset(LhsReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(LhsDP);
-    BuildMI(MBB, MI, DL, get(M65832::CMP_IMM))
-        .addReg(M65832::A, RegState::Kill)
+    BuildMI(MBB, MI, DL, get(M65832::CMPR_IMM))
+        .addReg(LhsReg)
         .addImm(Imm);
     break;
   }
@@ -834,111 +1047,293 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     // The compare has already been done (via CMPR_DP), flags are set
     int64_t CC = MI.getOperand(0).getImm();
     MachineBasicBlock *Target = MI.getOperand(1).getMBB();
+    MachineBasicBlock *NextMBB = MBB.getNextNode();
     
     unsigned BrOpc;
+    bool Emitted = false;
     switch (CC) {
     case ISD::SETEQ:  BrOpc = M65832::BEQ; break;
     case ISD::SETNE:  BrOpc = M65832::BNE; break;
     case ISD::SETLT:  BrOpc = M65832::BMI; break;  // Signed less than
     case ISD::SETGE:  BrOpc = M65832::BPL; break;  // Signed greater or equal
     case ISD::SETGT:  // Signed greater than - need BNE + BPL combo
-      // For now, use BPL as approximation (works when not equal)
-      BrOpc = M65832::BPL; 
+      if (NextMBB) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addMBB(NextMBB);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addMBB(NextMBB);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addMBB(Target);
+        Emitted = true;
+        break;
+      }
+      BrOpc = M65832::BPL;
       break;
-    case ISD::SETLE:  BrOpc = M65832::BMI; break;  // Simplified
+    case ISD::SETLE:
+      if (NextMBB) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addMBB(Target);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addMBB(Target);
+        Emitted = true;
+        break;
+      }
+      BrOpc = M65832::BMI;
+      break;
     case ISD::SETULT: BrOpc = M65832::BCC; break;  // Unsigned less than
     case ISD::SETUGE: BrOpc = M65832::BCS; break;  // Unsigned greater or equal
-    case ISD::SETUGT: BrOpc = M65832::BCS; break;  // Simplified (use BCS + BNE for proper)
-    case ISD::SETULE: BrOpc = M65832::BCC; break;  // Simplified
+    case ISD::SETUGT:
+      if (NextMBB) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addMBB(NextMBB);
+        BuildMI(MBB, MI, DL, get(M65832::BCS)).addMBB(Target);
+        Emitted = true;
+        break;
+      }
+      BrOpc = M65832::BCS;
+      break;
+    case ISD::SETULE:
+      if (NextMBB) {
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addMBB(Target);
+        BuildMI(MBB, MI, DL, get(M65832::BCC)).addMBB(Target);
+        Emitted = true;
+        break;
+      }
+      BrOpc = M65832::BCC;
+      break;
     default:
       BrOpc = M65832::BNE;
       break;
     }
     
-    BuildMI(MBB, MI, DL, get(BrOpc)).addMBB(Target);
+    if (!Emitted) {
+      BuildMI(MBB, MI, DL, get(BrOpc)).addMBB(Target);
+    }
     break;
   }
 
   case M65832::SELECT_CC_PSEUDO: {
     // Conditional select: dst = (cc) ? trueVal : falseVal
-    // Strategy: copy false to dst, then conditionally copy true to dst
+    // Use inline branch sequence - MBB splitting causes iterator issues in expandPostRAPseudo
     Register DstReg = MI.getOperand(0).getReg();
     Register TrueReg = MI.getOperand(1).getReg();
     Register FalseReg = MI.getOperand(2).getReg();
     int64_t CC = MI.getOperand(3).getImm();
     
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-    unsigned TrueDP = getDPOffset(TrueReg - M65832::R0);
-    unsigned FalseDP = getDPOffset(FalseReg - M65832::R0);
+    // Handle register aliasing: when TrueReg == DstReg, we must NOT clobber it
+    // by copying FalseReg first. Instead, invert the logic:
+    // - Normal: copy false first, skip true copy if condition false
+    // - Inverted (when TrueReg == DstReg): skip false copy if condition true
+    bool InvertLogic = (TrueReg == DstReg && TrueReg != FalseReg);
     
-    // Create the branch opcode for when condition is true
-    unsigned BrOpc;
-    switch (CC) {
-    case ISD::SETEQ:  BrOpc = M65832::BEQ; break;
-    case ISD::SETNE:  BrOpc = M65832::BNE; break;
-    case ISD::SETLT:  BrOpc = M65832::BMI; break;
-    case ISD::SETGE:  BrOpc = M65832::BPL; break;
-    case ISD::SETGT:  BrOpc = M65832::BPL; break;  // Approximation
-    case ISD::SETLE:  BrOpc = M65832::BMI; break;  // Approximation
-    case ISD::SETULT: BrOpc = M65832::BCC; break;
-    case ISD::SETUGE: BrOpc = M65832::BCS; break;
-    case ISD::SETUGT: BrOpc = M65832::BCS; break;  // Approximation
-    case ISD::SETULE: BrOpc = M65832::BCC; break;  // Approximation
-    default:          BrOpc = M65832::BNE; break;
+    // If FalseReg == DstReg, normal logic works (copy to self is nop, then maybe copy true)
+    // If both alias DstReg, result is just DstReg regardless of condition
+    if (TrueReg == DstReg && FalseReg == DstReg) {
+      // Both source registers are the same as dest - nothing to do
+      break;
     }
     
-    // First, copy false value to destination
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FalseDP);
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A)
-        .addImm(DstDP);
+    // For inverted logic, we swap true/false and invert the condition
+    Register FirstCopyReg = InvertLogic ? TrueReg : FalseReg;
+    Register SecondCopyReg = InvertLogic ? FalseReg : TrueReg;
     
-    // If condition is true, overwrite with true value
-    // Branch over the copy if condition is FALSE (invert the condition)
-    // For example, if CC is EQ, we branch with BNE to skip the true copy
+    // Map from normal condition to inverted condition
+    auto InvertCC = [](int64_t cc) -> int64_t {
+      switch (cc) {
+      case ISD::SETEQ: return ISD::SETNE;
+      case ISD::SETNE: return ISD::SETEQ;
+      case ISD::SETLT: return ISD::SETGE;
+      case ISD::SETGE: return ISD::SETLT;
+      case ISD::SETGT: return ISD::SETLE;
+      case ISD::SETLE: return ISD::SETGT;
+      case ISD::SETULT: return ISD::SETUGE;
+      case ISD::SETUGE: return ISD::SETULT;
+      case ISD::SETUGT: return ISD::SETULE;
+      case ISD::SETULE: return ISD::SETUGT;
+      case ISD::SETOEQ: return ISD::SETONE;
+      case ISD::SETONE: return ISD::SETOEQ;
+      case ISD::SETOLT: return ISD::SETOGE;
+      case ISD::SETOGE: return ISD::SETOLT;
+      case ISD::SETOGT: return ISD::SETOLE;
+      case ISD::SETOLE: return ISD::SETOGT;
+      case ISD::SETUNE: return ISD::SETOEQ;
+      default: return cc;
+      }
+    };
+    
+    int64_t EffectiveCC = InvertLogic ? InvertCC(CC) : CC;
+    
+    // First, unconditionally copy first value to destination
+    // (Skip if it's already in destination - when FirstCopyReg == DstReg)
+    if (FirstCopyReg != DstReg) {
+      BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(FirstCopyReg);
+    }
+    
+    // Then conditionally copy second value based on condition code
+    // We need to skip the second copy if:
+    // - Normal mode: condition is FALSE (keep false value)
+    // - Inverted mode: condition is TRUE (keep true value)
+    // After inversion, we always skip if "effective condition" is FALSE
+    
+    // For most conditions: BranchIfFalse skip; MOVR second->dst; skip:
+    // MOVR_DP is 5 bytes, branch is 3 bytes
+    
     unsigned SkipBrOpc;
-    switch (BrOpc) {
-    case M65832::BEQ: SkipBrOpc = M65832::BNE; break;
-    case M65832::BNE: SkipBrOpc = M65832::BEQ; break;
-    case M65832::BMI: SkipBrOpc = M65832::BPL; break;
-    case M65832::BPL: SkipBrOpc = M65832::BMI; break;
-    case M65832::BCC: SkipBrOpc = M65832::BCS; break;
-    case M65832::BCS: SkipBrOpc = M65832::BCC; break;
-    default:          SkipBrOpc = M65832::BEQ; break;
+    bool NeedDualBranch = false;
+    
+    switch (EffectiveCC) {
+    case ISD::SETEQ:
+    case ISD::SETOEQ:  SkipBrOpc = M65832::BNE; break;  // skip if NE
+    case ISD::SETNE:
+    case ISD::SETONE:
+    case ISD::SETUNE:  SkipBrOpc = M65832::BEQ; break;  // skip if EQ
+    case ISD::SETLT:
+    case ISD::SETOLT:  SkipBrOpc = M65832::BPL; break;  // skip if >= (N=0)
+    case ISD::SETGE:
+    case ISD::SETOGE:  SkipBrOpc = M65832::BMI; break;  // skip if < (N=1)
+    case ISD::SETGT:
+    case ISD::SETOGT:  
+      // GT: true if N=0 AND Z=0. Skip second copy if Z=1 OR N=1
+      NeedDualBranch = true;
+      break;
+    case ISD::SETLE:
+    case ISD::SETOLE:
+      // LE: true if N=1 OR Z=1. Skip second copy if N=0 AND Z=0 (i.e., GT)
+      NeedDualBranch = true;
+      break;
+    case ISD::SETULT:  SkipBrOpc = M65832::BCS; break;  // skip if >= (C=1)
+    case ISD::SETUGE:  SkipBrOpc = M65832::BCC; break;  // skip if < (C=0)
+    case ISD::SETUGT:
+      // UGT: true if C=1 AND Z=0. Skip if Z=1 OR C=0
+      NeedDualBranch = true;
+      break;
+    case ISD::SETULE:
+      // ULE: true if C=0 OR Z=1. Skip if C=1 AND Z=0 (UGT)
+      NeedDualBranch = true;
+      break;
+    default:           SkipBrOpc = M65832::BEQ; break;
     }
     
-    // Create a label for the end
-    // For post-RA expansion, we need to create basic blocks or use labels
-    // Simpler approach: use a forward branch instruction
-    // BNE/BEQ to skip 6 bytes (LDA_DP = 3 bytes, STA_DP = 3 bytes) 
-    // Actually this is tricky because we can't easily create labels here
-    // 
-    // Better approach: always copy true, then conditionally overwrite with false
-    // But that's also tricky because we'd need to reverse the logic
-    //
-    // Simplest for now: just copy both values, the last one wins
-    // This is inefficient but correct - let's make it work first
+    if (NeedDualBranch) {
+      // For GT/LE/UGT/ULE we need special handling
+      // MOVR_DP is 5 bytes
+      if (EffectiveCC == ISD::SETGT || EffectiveCC == ISD::SETOGT) {
+        // GT: skip second copy if Z=1 OR N=1
+        // BEQ at X: skip to X+11 (past 2 branches + MOVR), so *+11, offset = 8
+        // BMI at X+3: skip to X+11, so *+8, offset = 5
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(11);  // skip if equal (Z=1)
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(8);   // skip if less (N=1)
+      } else if (EffectiveCC == ISD::SETLE || EffectiveCC == ISD::SETOLE) {
+        // LE: copy if Z=1 OR N=1, skip only if GT (Z=0 AND N=0)
+        // Structure: BEQ copy, BMI copy, BRA skip, MOVR, skip:
+        // Note: addImm(N) is treated as *+N by assembler, encoded offset = N-3
+        // BEQ at X: target MOVR at X+9, so *+9, offset = 6
+        // BMI at X+3: target MOVR at X+9, so *+6, offset = 3  
+        // BRA at X+6: target past MOVR at X+14, so *+8, offset = 5
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(9);  // if equal, jump to copy
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(6);  // if less, jump to copy
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(8);  // else skip copy
+      } else if (EffectiveCC == ISD::SETUGT) {
+        // UGT: skip if Z=1 OR C=0
+        // Note: addImm(N) is treated as *+N, encoded offset = N-3
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(11);  // skip if equal
+        BuildMI(MBB, MI, DL, get(M65832::BCC)).addImm(8);   // skip if carry clear
+      } else if (EffectiveCC == ISD::SETULE) {
+        // ULE: copy if Z=1 OR C=0, skip if UGT (C=1 AND Z=0)
+        // Structure: BEQ copy, BCC copy, BRA skip, MOVR, skip:
+        // Note: addImm(N) is treated as *+N, encoded offset = N-3
+        BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(9);  // if equal, jump to copy
+        BuildMI(MBB, MI, DL, get(M65832::BCC)).addImm(6);  // if carry clear, jump to copy
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(8);  // else skip copy
+      }
+    } else {
+      // Simple single branch: skip second copy if effective condition is false
+      // MOVR_DP is 5 bytes, so target is *+8 (skip 3 byte branch + 5 byte MOVR)
+      // Note: addImm(N) is treated as *+N, encoded offset = N-3
+      BuildMI(MBB, MI, DL, get(SkipBrOpc)).addImm(8);
+    }
     
-    // Actually, let's use relative branch: branch +4 (skip next instruction)
-    // M65832 BRA takes a signed byte offset - we branch past 6 bytes of LDA+STA
-    // Unfortunately BuildMI with addImm for branch target doesn't work well
+    // Copy second value (only reached if effective condition is true)
+    BuildMI(MBB, MI, DL, get(M65832::MOVR_DP), DstReg).addReg(SecondCopyReg);
     
-    // Let me just emit both copies - dst gets true value
-    // The compare already set flags, so just do:
-    // if CC is true: dst = true, else dst = false
-    // 
-    // Since we already copied false above, now conditionally copy true:
-    // Actually this doesn't work in post-RA because we can't branch forward
+    break;
+  }
+
+  // Multiply/Divide pseudo expansions
+  // Hardware instructions work on A and a memory operand:
+  // MUL dp: A = A * [dp], high word in T
+  // DIV dp: A = A / [dp], remainder in T
+  
+  case M65832::MUL_GPR: {
+    // dst = src1 * src2: LDA src1; MUL src2; STA dst
+    // MUL_DP: (outs ACC:$dst, TREG:$hi), (ins ACC:$src1, DPOp:$src2)
+    Register DstReg = MI.getOperand(0).getReg();
+    Register Src1Reg = MI.getOperand(1).getReg();
+    Register Src2Reg = MI.getOperand(2).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
     
-    // Simplest correct approach: just copy the true value
-    // The selection logic should have already been done by the time we get here
-    // Just copy true value to dest, overwriting the false we just stored
-    // This is WRONG for the actual select semantics though
+    // Load first operand into A
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+    // MUL: A = A * [dp], T = high word
+    // Outputs: A (result), T (high)
+    // Inputs: A (implicit), dp
+    BuildMI(MBB, MI, DL, get(M65832::MUL_DP))
+        .addReg(M65832::A, RegState::Define)  // $dst
+        .addReg(M65832::T, RegState::Define | RegState::Dead)  // $hi (unused)
+        .addReg(M65832::A)  // $src1
+        .addImm(Src2DP);    // $src2 (DP address)
+    // Store result
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+  
+  case M65832::SDIV_GPR:
+  case M65832::UDIV_GPR: {
+    // dst = src1 / src2: LDA src1; DIV src2; STA dst
+    // DIV_DP: (outs ACC:$dst, TREG:$rem), (ins ACC:$src1, DPOp:$src2)
+    Register DstReg = MI.getOperand(0).getReg();
+    Register Src1Reg = MI.getOperand(1).getReg();
+    Register Src2Reg = MI.getOperand(2).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
     
-    // Let's just unconditionally copy both. The caller expects select behavior.
-    // This will give INCORRECT results but won't crash.
-    // TODO: Fix this properly with basic block manipulation
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(TrueDP);
+    // Load dividend into A
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+    // DIV: A = A / [dp], T = remainder
+    unsigned DivOpc = (MI.getOpcode() == M65832::SDIV_GPR) ? M65832::DIV_DP : M65832::DIVU_DP;
+    BuildMI(MBB, MI, DL, get(DivOpc))
+        .addReg(M65832::A, RegState::Define)  // quotient
+        .addReg(M65832::T, RegState::Define | RegState::Dead)  // remainder (unused)
+        .addReg(M65832::A)  // dividend
+        .addImm(Src2DP);    // divisor (DP address)
+    // Store quotient
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+  
+  case M65832::SREM_GPR:
+  case M65832::UREM_GPR: {
+    // dst = src1 % src2: LDA src1; DIV src2; result is in T; TTA; STA dst
+    Register DstReg = MI.getOperand(0).getReg();
+    Register Src1Reg = MI.getOperand(1).getReg();
+    Register Src2Reg = MI.getOperand(2).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
+    
+    // Load dividend into A
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+    // DIV: A = A / [dp], T = remainder
+    unsigned DivOpc = (MI.getOpcode() == M65832::SREM_GPR) ? M65832::DIV_DP : M65832::DIVU_DP;
+    BuildMI(MBB, MI, DL, get(DivOpc))
+        .addReg(M65832::A, RegState::Define | RegState::Dead)  // quotient (unused)
+        .addReg(M65832::T, RegState::Define)  // remainder
+        .addReg(M65832::A)  // dividend
+        .addImm(Src2DP);    // divisor (DP address)
+    // Transfer remainder from T to A: TTA
+    BuildMI(MBB, MI, DL, get(M65832::TTA), M65832::A);
+    // Store remainder
     BuildMI(MBB, MI, DL, get(M65832::STA_DP))
         .addReg(M65832::A, RegState::Kill)
         .addImm(DstDP);
