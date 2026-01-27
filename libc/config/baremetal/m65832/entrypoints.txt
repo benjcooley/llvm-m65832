@@ -1,0 +1,55 @@
+# M65832 baremetal libc entrypoints
+# Start minimal, add more as needed
+
+set(TARGET_LIBC_ENTRYPOINTS
+    # string.h entrypoints
+    libc.src.string.memcpy
+    libc.src.string.memset
+    libc.src.string.memmove
+    libc.src.string.memcmp
+    libc.src.string.strlen
+    libc.src.string.strcmp
+    libc.src.string.strcpy
+    libc.src.string.strncpy
+    libc.src.string.strcat
+    libc.src.string.strchr
+    libc.src.string.strrchr
+
+    # stdlib.h entrypoints
+    libc.src.stdlib.abs
+    libc.src.stdlib.atoi
+    libc.src.stdlib.malloc
+    libc.src.stdlib.free
+    libc.src.stdlib.calloc
+    libc.src.stdlib.realloc
+
+    # stdio.h entrypoints (minimal)
+    libc.src.stdio.printf
+    libc.src.stdio.putchar
+    libc.src.stdio.puts
+    libc.src.stdio.snprintf
+    libc.src.stdio.sprintf
+
+    # ctype.h entrypoints
+    libc.src.ctype.isalpha
+    libc.src.ctype.isdigit
+    libc.src.ctype.isspace
+    libc.src.ctype.tolower
+    libc.src.ctype.toupper
+
+    # errno.h entrypoints
+    libc.src.errno.errno
+
+    # internal entrypoints
+    libc.startup.baremetal.init
+    libc.startup.baremetal.fini
+)
+
+set(TARGET_LIBM_ENTRYPOINTS
+    # Minimal math support
+)
+
+set(TARGET_LLVMLIBC_ENTRYPOINTS
+  ${TARGET_LIBC_ENTRYPOINTS}
+  ${TARGET_LIBM_ENTRYPOINTS}
+)
