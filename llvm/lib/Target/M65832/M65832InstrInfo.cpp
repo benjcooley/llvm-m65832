@@ -1115,6 +1115,19 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       // Simple case: LDF Fn, (Rm) with R0-R15
       BuildMI(MBB, MI, DL, get(LoadOpc), DstReg)
           .addReg(BaseReg);
+    } else if (BaseReg == M65832::B) {
+      // B register: can use direct B+offset addressing or need to compute address
+      // For now, compute address into R0 and use indirect
+      // LDA B+Offset (load effective address)
+      // STA R0
+      // LDF Fn, (R0)
+      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+          .addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(getDPOffset(0)); // R0
+      BuildMI(MBB, MI, DL, get(LoadOpc), DstReg)
+          .addReg(M65832::R0);
     } else {
       // Need to compute address and/or copy to low register
       // Load base address into A
@@ -1189,6 +1202,19 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       BuildMI(MBB, MI, DL, get(StoreOpc))
           .addReg(SrcReg)
           .addReg(BaseReg);
+    } else if (BaseReg == M65832::B) {
+      // B register: compute address into R0 and use indirect
+      // LDA B+Offset
+      // STA R0
+      // STF Fn, (R0)
+      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+          .addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(getDPOffset(0)); // R0
+      BuildMI(MBB, MI, DL, get(StoreOpc))
+          .addReg(SrcReg)
+          .addReg(M65832::R0);
     } else {
       // Need to compute address and/or copy to low register
       // Load base address into A
