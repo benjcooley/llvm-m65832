@@ -152,21 +152,25 @@ M65832_LIB="$INSTALL_PREFIX/lib"
 M65832_INC="$INSTALL_PREFIX/include"
 mkdir -p "$M65832_LIB" "$M65832_INC"
 
-# Compile syscalls
-"$CLANG" -target m65832-elf -ffreestanding -O2 -g \
+# Compile syscalls (using -O1, no -g due to debug info bug)
+"$CLANG" -target m65832-elf -ffreestanding -O1 \
     -I"$M65832_INC" \
     -c "$STDLIB_DIR/picolibc/syscalls.c" -o "$M65832_LIB/syscalls.o"
 
-# Compile crt0
-"$CLANG" -target m65832-elf -ffreestanding -O2 -g \
+# Compile crt0 (using -O1, no -g due to debug info bug)
+"$CLANG" -target m65832-elf -ffreestanding -O1 \
     -I"$M65832_INC" \
     -c "$STDLIB_DIR/picolibc/crt0.c" -o "$M65832_LIB/crt0.o"
 
 # Copy linker script
 cp "$STDLIB_DIR/picolibc/m65832.ld" "$M65832_LIB/"
 
-# Create libsys.a with syscalls
-"$LLVM_AR" rcs "$M65832_LIB/libsys.a" "$M65832_LIB/syscalls.o"
+# Create libsys.a with syscalls (use system ar if llvm-ar not available)
+if [ -x "$LLVM_AR" ]; then
+    "$LLVM_AR" rcs "$M65832_LIB/libsys.a" "$M65832_LIB/syscalls.o"
+else
+    ar rcs "$M65832_LIB/libsys.a" "$M65832_LIB/syscalls.o"
+fi
 
 echo ""
 echo "=========================================="

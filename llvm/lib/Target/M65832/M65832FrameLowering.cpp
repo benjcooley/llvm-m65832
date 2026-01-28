@@ -72,23 +72,33 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
         .addImm(M65832InstrInfo::getDPOffset(29)); // R29 = FP = SP
   }
 
-  if (StackSize == 0)
-    return;
+  if (StackSize != 0) {
+    // Adjust stack pointer: SP = SP - StackSize
+    // We need to do this via A since M65832 can't subtract from SP directly
+    // TSX; TXA; SEC; SBC #stacksize; TAX; TXS
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
+        .addReg(M65832::X);
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::SEC));
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::SBC_IMM), M65832::A)
+        .addReg(M65832::A)
+        .addImm(StackSize);
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::TAX), M65832::X)
+        .addReg(M65832::A);
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::TXS))
+        .addReg(M65832::X);
+  }
 
-  // Adjust stack pointer: SP = SP - StackSize
-  // We need to do this via A since M65832 can't subtract from SP directly
-  // TSX; TXA; SEC; SBC #stacksize; TAX; TXS
+  // Set B = SP (frame base) using SB dp via R29 slot
+  // Keep R29 updated with SP so SB dp loads the correct base.
   BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
   BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
       .addReg(M65832::X);
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::SEC));
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::SBC_IMM), M65832::A)
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::STA_DP))
       .addReg(M65832::A)
-      .addImm(StackSize);
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::TAX), M65832::X)
-      .addReg(M65832::A);
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::TXS))
-      .addReg(M65832::X);
+      .addImm(M65832InstrInfo::getDPOffset(29));
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::SB_DP))
+      .addImm(M65832InstrInfo::getDPOffset(29));
 }
 
 void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
@@ -204,20 +214,11 @@ M65832FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   // Calculate offset from frame register
   int64_t Offset = MFI.getObjectOffset(FI);
   
-  if (hasFP(MF)) {
-    FrameReg = M65832::R29;
-    // FP points to the saved FP location on the stack.
-    // Local variables are below FP (at negative offsets).
-    // The offset from getObjectOffset is relative to the frame base,
-    // which is where FP points (the saved FP slot).
-    // So we use the offset directly.
-    Offset += MFI.getStackSize();
-  } else {
-    FrameReg = M65832::SP;
-    // SP points to the bottom of the stack frame.
-    // Need to add StackSize to convert from frame-relative to SP-relative.
-    Offset += MFI.getStackSize();
-  }
+  // Use B as frame base (points to SP after allocation)
+  FrameReg = M65832::B;
+  // SP points to the bottom of the stack frame.
+  // Need to add StackSize to convert from frame-relative to SP-relative.
+  Offset += MFI.getStackSize();
   
   return StackOffset::getFixed(Offset);
 }

@@ -1,6 +1,9 @@
 #!/bin/bash
 # Wrapper for clang that adds M65832 target flags
+# Use ld.lld explicitly (ELF linker, not ld64.lld which is Mach-O)
+export PATH="/Users/benjamincooley/projects/llvm-m65832/build/bin:$PATH"
 exec /Users/benjamincooley/projects/llvm-m65832/build/bin/clang \
     -target m65832-elf \
     -ffreestanding \
+    -fuse-ld=/Users/benjamincooley/projects/llvm-m65832/build/bin/ld.lld \
     "$@"

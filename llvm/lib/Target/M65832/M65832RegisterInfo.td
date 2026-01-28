@@ -158,6 +158,18 @@ def GPR : RegisterClass<"M65832", [i32], 32,
     R29                                        // Frame pointer (last resort)
   )>;
 
+// Address base registers for memory ops (avoid high DP regs like R32+)
+def GPRAddr : RegisterClass<"M65832", [i32], 32,
+  (add
+    // Caller-saved: arguments then temporaries
+    R0, R1, R2, R3, R4, R5, R6, R7,
+    R8, R9, R10, R11, R12, R13, R14, R15,
+    R30,
+    // Callee-saved (ok for long-lived bases)
+    R16, R17, R18, R19, R20, R21, R22, R23,
+    R29
+  )>;
+
 // Argument registers only
 def GPRArg : RegisterClass<"M65832", [i32], 32,
   (add R0, R1, R2, R3, R4, R5, R6, R7)>;

@@ -40,6 +40,12 @@ public:
   Register getRegisterByName(const char *RegName, LLT VT,
                              const MachineFunction &MF) const override;
 
+  // Inline assembly constraint support
+  ConstraintType getConstraintType(StringRef Constraint) const override;
+  std::pair<unsigned, const TargetRegisterClass *>
+  getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                               StringRef Constraint, MVT VT) const override;
+
 private:
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const;
@@ -48,9 +54,12 @@ private:
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerSELECT(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerShiftLeftParts(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerShiftRightParts(SDValue Op, SelectionDAG &DAG, bool IsSRA) const;
 
   // Calling convention lowering
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
@@ -72,9 +81,13 @@ private:
                       const SmallVectorImpl<ISD::OutputArg> &Outs,
                       LLVMContext &Context, const Type *RetTy) const override;
 
-  // Custom inserter helper
+  // Custom inserter helpers
   MachineBasicBlock *emitSelect(MachineInstr &MI,
                                 MachineBasicBlock *MBB) const;
+  MachineBasicBlock *emitSelectCC(MachineInstr &MI,
+                                  MachineBasicBlock *MBB) const;
+  MachineBasicBlock *emitSelectCCFP(MachineInstr &MI,
+                                    MachineBasicBlock *MBB) const;
 };
 
 } // end namespace llvm

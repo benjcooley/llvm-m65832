@@ -1,0 +1,3 @@
+#!/bin/bash
+# Direct LLD wrapper for M65832 linking
+exec /Users/benjamincooley/projects/llvm-m65832/build/bin/ld.lld "$@"

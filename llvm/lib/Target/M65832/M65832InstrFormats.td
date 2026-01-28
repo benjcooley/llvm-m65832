@@ -112,6 +112,13 @@ class F7_Imm8<bits<8> ext_opcode, dag outs, dag ins, string asmstr, list<dag> pa
   let Opcode = ext_opcode;
 }
 
+// F7_Imm32: Extended Immediate 32-bit ($02 prefix, 6 bytes total)
+class F7_Imm32<bits<8> ext_opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 6;
+  let Opcode = ext_opcode;
+}
+
 // F8: Immediate 32-bit (5 bytes total)
 class F8<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {

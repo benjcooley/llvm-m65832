@@ -25,6 +25,7 @@
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <utility>
 
 using namespace llvm;
 
@@ -81,6 +82,12 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::ROTL, MVT::i32, Legal);
   setOperationAction(ISD::ROTR, MVT::i32, Legal);
   
+  // Multi-word shifts (for 64-bit shifts on 32-bit target)
+  // Custom lowering uses the barrel shifter for efficient implementation
+  setOperationAction(ISD::SHL_PARTS, MVT::i32, Custom);
+  setOperationAction(ISD::SRL_PARTS, MVT::i32, Custom);
+  setOperationAction(ISD::SRA_PARTS, MVT::i32, Custom);
+  
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   setOperationAction(ISD::VAARG, MVT::Other, Expand);
   setOperationAction(ISD::VACOPY, MVT::Other, Expand);
@@ -110,6 +117,7 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   // Sign/zero extends - now have hardware SEXT8/SEXT16!
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Legal);
+  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
   
   // Dynamic stack allocation not supported directly
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32, Expand);
@@ -207,6 +215,16 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::STORE, MVT::f32, Legal);
   setOperationAction(ISD::STORE, MVT::f64, Legal);
   
+  // FP extending loads - expand to load + fpextend
+  // (Can't do extending load directly, need separate load and convert)
+  setLoadExtAction(ISD::EXTLOAD, MVT::f64, MVT::f32, Expand);
+  
+  // FP/Int bitcast - expand through memory (no direct FMV instruction)
+  setOperationAction(ISD::BITCAST, MVT::f32, Expand);
+  setOperationAction(ISD::BITCAST, MVT::i32, Expand);
+  setOperationAction(ISD::BITCAST, MVT::f64, Expand);
+  setOperationAction(ISD::BITCAST, MVT::i64, Expand);
+  
   // FP comparisons - Custom lowering using FCMP + conditional select
   setOperationAction(ISD::SETCC, MVT::f32, Custom);
   setOperationAction(ISD::SETCC, MVT::f64, Custom);
@@ -264,20 +282,20 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::FMAD, MVT::f64, Expand);
   
   // Common FP settings
-  setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
-  setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
-  setOperationAction(ISD::SELECT, MVT::f32, Expand);
-  setOperationAction(ISD::SELECT, MVT::f64, Expand);
+  // For floating-point, we use Custom lowering for SELECT_CC and SELECT
+  // These are expanded via EmitInstrWithCustomInserter into branch sequences
+  setOperationAction(ISD::SELECT_CC, MVT::f32, Custom);
+  setOperationAction(ISD::SELECT_CC, MVT::f64, Custom);
+  // SELECT for FP types also needs Custom (can't use Expand if SELECT_CC is Custom)
+  setOperationAction(ISD::SELECT, MVT::f32, Custom);
+  setOperationAction(ISD::SELECT, MVT::f64, Custom);
   
   // Floating point constants - always expand (load from constant pool)
   setOperationAction(ISD::ConstantFP, MVT::f32, Expand);
   setOperationAction(ISD::ConstantFP, MVT::f64, Expand);
   
-  // Bitcast between float and int
-  setOperationAction(ISD::BITCAST, MVT::f32, Legal);
-  setOperationAction(ISD::BITCAST, MVT::i32, Legal);
-  setOperationAction(ISD::BITCAST, MVT::f64, Expand);
-  setOperationAction(ISD::BITCAST, MVT::i64, Expand);
+  // Truncating stores for FP - expand to convert + store
+  setTruncStoreAction(MVT::f64, MVT::f32, Expand);
 }
 
 SDValue M65832TargetLowering::LowerOperation(SDValue Op,
@@ -293,6 +311,10 @@ SDValue M65832TargetLowering::LowerOperation(SDValue Op,
   case ISD::VASTART:          return LowerVASTART(Op, DAG);
   case ISD::FRAMEADDR:        return LowerFRAMEADDR(Op, DAG);
   case ISD::RETURNADDR:       return LowerRETURNADDR(Op, DAG);
+  case ISD::SHL_PARTS:        return LowerShiftLeftParts(Op, DAG);
+  case ISD::SRL_PARTS:        return LowerShiftRightParts(Op, DAG, false);
+  case ISD::SRA_PARTS:        return LowerShiftRightParts(Op, DAG, true);
+  case ISD::SELECT:           return LowerSELECT(Op, DAG);
   default:
     llvm_unreachable("unimplemented operation");
   }
@@ -306,7 +328,9 @@ const char *M65832TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case M65832ISD::CMP:          return "M65832ISD::CMP";
   case M65832ISD::FCMP:         return "M65832ISD::FCMP";
   case M65832ISD::BR_CC:        return "M65832ISD::BR_CC";
+  case M65832ISD::BR_CC_CMP:    return "M65832ISD::BR_CC_CMP";
   case M65832ISD::SELECT_CC:    return "M65832ISD::SELECT_CC";
+  case M65832ISD::SELECT_CC_MIXED: return "M65832ISD::SELECT_CC_MIXED";
   case M65832ISD::SELECT_CC_FP: return "M65832ISD::SELECT_CC_FP";
   case M65832ISD::WRAPPER:      return "M65832ISD::WRAPPER";
   case M65832ISD::SMUL_LOHI:    return "M65832ISD::SMUL_LOHI";
@@ -370,19 +394,40 @@ SDValue M65832TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(3);
   SDValue Dest = Op.getOperand(4);
   
-  // Generate compare - use FCMP for float types, CMP for integers
-  SDValue Cmp;
   EVT CmpVT = LHS.getValueType();
   if (CmpVT == MVT::f32 || CmpVT == MVT::f64) {
-    Cmp = DAG.getNode(M65832ISD::FCMP, DL, MVT::Glue, LHS, RHS);
-  } else {
-    Cmp = DAG.getNode(M65832ISD::CMP, DL, MVT::Glue, LHS, RHS);
+    SDValue Cmp = DAG.getNode(M65832ISD::FCMP, DL, MVT::Glue, LHS, RHS);
+    SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
+    return DAG.getNode(M65832ISD::BR_CC, DL, Op.getValueType(), Chain, Dest,
+                       CCVal, Cmp);
   }
-  
-  // Generate branch
+
+  // Canonicalize to avoid SETGT/SETLE/SETUGT/SETULE in fused branch
+  switch (CC) {
+  case ISD::SETGT:
+    CC = ISD::SETLT;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETLE:
+    CC = ISD::SETGE;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETUGT:
+    CC = ISD::SETULT;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETULE:
+    CC = ISD::SETUGE;
+    std::swap(LHS, RHS);
+    break;
+  default:
+    break;
+  }
+
+  // For integers, use fused compare-and-branch to prevent flag clobbering
   SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
-  return DAG.getNode(M65832ISD::BR_CC, DL, Op.getValueType(), Chain, Dest,
-                     CCVal, Cmp);
+  return DAG.getNode(M65832ISD::BR_CC_CMP, DL, Op.getValueType(), Chain,
+                     LHS, RHS, CCVal, Dest);
 }
 
 SDValue M65832TargetLowering::LowerSELECT_CC(SDValue Op,
@@ -404,11 +449,38 @@ SDValue M65832TargetLowering::LowerSELECT_CC(SDValue Op,
                        TrueVal, FalseVal, CCVal, Cmp);
   }
   
+  // Canonicalize integer comparisons to avoid SETGT/SETLE/SETUGT/SETULE
+  switch (CC) {
+  case ISD::SETGT:
+    CC = ISD::SETLT;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETLE:
+    CC = ISD::SETGE;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETUGT:
+    CC = ISD::SETULT;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETULE:
+    CC = ISD::SETUGE;
+    std::swap(LHS, RHS);
+    break;
+  default:
+    break;
+  }
+
   // For integers, include LHS/RHS so each SELECT has its own CMP
   // This ensures flags aren't clobbered by intervening instructions
   SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
-  return DAG.getNode(M65832ISD::SELECT_CC, DL, Op.getValueType(), 
-                     LHS, RHS, TrueVal, FalseVal, CCVal);
+  
+  // If result type is FP but comparison is integer, use SELECT_CC_MIXED
+  EVT ResultVT = Op.getValueType();
+  unsigned Opc = ResultVT.isFloatingPoint() ? M65832ISD::SELECT_CC_MIXED 
+                                             : M65832ISD::SELECT_CC;
+  
+  return DAG.getNode(Opc, DL, ResultVT, LHS, RHS, TrueVal, FalseVal, CCVal);
 }
 
 SDValue M65832TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
@@ -429,9 +501,52 @@ SDValue M65832TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
                        One, Zero, CCVal, Cmp);
   }
   
+  // Canonicalize integer comparisons to avoid SETGT/SETLE/SETUGT/SETULE
+  switch (CC) {
+  case ISD::SETGT:
+    CC = ISD::SETLT;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETLE:
+    CC = ISD::SETGE;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETUGT:
+    CC = ISD::SETULT;
+    std::swap(LHS, RHS);
+    break;
+  case ISD::SETULE:
+    CC = ISD::SETUGE;
+    std::swap(LHS, RHS);
+    break;
+  default:
+    break;
+  }
+
   // For integers, include LHS/RHS for comparison
+  CCVal = DAG.getConstant(CC, DL, MVT::i32);
   return DAG.getNode(M65832ISD::SELECT_CC, DL, MVT::i32, 
                      LHS, RHS, One, Zero, CCVal);
+}
+
+SDValue M65832TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Cond = Op.getOperand(0);
+  SDValue TrueVal = Op.getOperand(1);
+  SDValue FalseVal = Op.getOperand(2);
+  EVT VT = Op.getValueType();
+  
+  // Convert SELECT to SELECT_CC by comparing the condition against 0
+  // This pattern: select(cond, tv, fv) -> select_cc(cond, 0, tv, fv, NE)
+  SDValue Zero = DAG.getConstant(0, DL, Cond.getValueType());
+  SDValue CCVal = DAG.getConstant(ISD::SETNE, DL, MVT::i32);
+  
+  // For integer results, use SELECT_CC; for FP results, use SELECT_CC_MIXED
+  // SELECT_CC_MIXED allows integer comparison with FP result
+  unsigned Opc = VT.isFloatingPoint() ? M65832ISD::SELECT_CC_MIXED 
+                                       : M65832ISD::SELECT_CC;
+  
+  return DAG.getNode(Opc, DL, VT, Cond, Zero, TrueVal, FalseVal, CCVal);
 }
 
 SDValue M65832TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
@@ -484,6 +599,101 @@ SDValue M65832TargetLowering::LowerRETURNADDR(SDValue Op,
   // Return address is stored by JSR at [SP]
   // This is complex on M65832, we'd need to access the stack
   return DAG.getUNDEF(MVT::i32);
+}
+
+// Lower 64-bit shift left on 32-bit target using barrel shifter
+// SHL_PARTS: (Lo, Hi) = SHL_PARTS(LoIn, HiIn, ShiftAmt)
+SDValue M65832TargetLowering::LowerShiftLeftParts(SDValue Op,
+                                                   SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Lo = Op.getOperand(0);
+  SDValue Hi = Op.getOperand(1);
+  SDValue Shamt = Op.getOperand(2);
+  EVT VT = Lo.getValueType();
+
+  // if Shamt < 32:
+  //   Lo = Lo << Shamt
+  //   Hi = (Hi << Shamt) | (Lo >> (32 - Shamt))
+  // else:
+  //   Lo = 0
+  //   Hi = Lo << (Shamt - 32)
+  
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue One = DAG.getConstant(1, DL, VT);
+  SDValue Minus32 = DAG.getSignedConstant(-32, DL, VT);
+  SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
+  
+  SDValue ShamtMinus32 = DAG.getNode(ISD::ADD, DL, VT, Shamt, Minus32);
+  SDValue ThirtyOneMinusShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyOne, Shamt);
+
+  SDValue LoTrue = DAG.getNode(ISD::SHL, DL, VT, Lo, Shamt);
+  SDValue ShiftRight1Lo = DAG.getNode(ISD::SRL, DL, VT, Lo, One);
+  SDValue ShiftRightLo = DAG.getNode(ISD::SRL, DL, VT, ShiftRight1Lo, ThirtyOneMinusShamt);
+  SDValue ShiftLeftHi = DAG.getNode(ISD::SHL, DL, VT, Hi, Shamt);
+  SDValue HiTrue = DAG.getNode(ISD::OR, DL, VT, ShiftLeftHi, ShiftRightLo);
+  SDValue HiFalse = DAG.getNode(ISD::SHL, DL, VT, Lo, ShamtMinus32);
+
+  SDValue CC = DAG.getSetCC(DL, VT, ShamtMinus32, Zero, ISD::SETLT);
+
+  Lo = DAG.getNode(ISD::SELECT, DL, VT, CC, LoTrue, Zero);
+  Hi = DAG.getNode(ISD::SELECT, DL, VT, CC, HiTrue, HiFalse);
+
+  SDValue Parts[2] = {Lo, Hi};
+  return DAG.getMergeValues(Parts, DL);
+}
+
+// Lower 64-bit shift right on 32-bit target using barrel shifter
+// SRL_PARTS/SRA_PARTS: (Lo, Hi) = SRL_PARTS(LoIn, HiIn, ShiftAmt)
+SDValue M65832TargetLowering::LowerShiftRightParts(SDValue Op,
+                                                    SelectionDAG &DAG,
+                                                    bool IsSRA) const {
+  SDLoc DL(Op);
+  SDValue Lo = Op.getOperand(0);
+  SDValue Hi = Op.getOperand(1);
+  SDValue Shamt = Op.getOperand(2);
+  EVT VT = Lo.getValueType();
+
+  // SRA expansion:
+  //   if Shamt < 32:
+  //     Lo = (Lo >> Shamt) | (Hi << (32 - Shamt))
+  //     Hi = Hi >> Shamt (arithmetic)
+  //   else:
+  //     Lo = Hi >> (Shamt - 32) (arithmetic)
+  //     Hi = Hi >> 31 (sign extension)
+  //
+  // SRL expansion:
+  //   if Shamt < 32:
+  //     Lo = (Lo >> Shamt) | (Hi << (32 - Shamt))
+  //     Hi = Hi >> Shamt (logical)
+  //   else:
+  //     Lo = Hi >> (Shamt - 32) (logical)
+  //     Hi = 0
+
+  unsigned ShiftRightOp = IsSRA ? ISD::SRA : ISD::SRL;
+
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue One = DAG.getConstant(1, DL, VT);
+  SDValue Minus32 = DAG.getSignedConstant(-32, DL, VT);
+  SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
+  
+  SDValue ShamtMinus32 = DAG.getNode(ISD::ADD, DL, VT, Shamt, Minus32);
+  SDValue ThirtyOneMinusShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyOne, Shamt);
+
+  SDValue ShiftRightLo = DAG.getNode(ISD::SRL, DL, VT, Lo, Shamt);
+  SDValue ShiftLeftHi1 = DAG.getNode(ISD::SHL, DL, VT, Hi, One);
+  SDValue ShiftLeftHi = DAG.getNode(ISD::SHL, DL, VT, ShiftLeftHi1, ThirtyOneMinusShamt);
+  SDValue LoTrue = DAG.getNode(ISD::OR, DL, VT, ShiftRightLo, ShiftLeftHi);
+  SDValue HiTrue = DAG.getNode(ShiftRightOp, DL, VT, Hi, Shamt);
+  SDValue LoFalse = DAG.getNode(ShiftRightOp, DL, VT, Hi, ShamtMinus32);
+  SDValue HiFalse = IsSRA ? DAG.getNode(ISD::SRA, DL, VT, Hi, ThirtyOne) : Zero;
+
+  SDValue CC = DAG.getSetCC(DL, VT, ShamtMinus32, Zero, ISD::SETLT);
+
+  Lo = DAG.getNode(ISD::SELECT, DL, VT, CC, LoTrue, LoFalse);
+  Hi = DAG.getNode(ISD::SELECT, DL, VT, CC, HiTrue, HiFalse);
+
+  SDValue Parts[2] = {Lo, Hi};
+  return DAG.getMergeValues(Parts, DL);
 }
 
 Register M65832TargetLowering::getRegisterByName(const char *RegName, LLT VT,
@@ -761,7 +971,17 @@ M65832TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                     MachineBasicBlock *MBB) const {
   switch (MI.getOpcode()) {
   case M65832::SELECT:
+  case M65832::SELECT_F32:
+  case M65832::SELECT_F64:
     return emitSelect(MI, MBB);
+  case M65832::SELECT_CC_PSEUDO:
+  case M65832::SELECT_CC_F32_PSEUDO:
+  case M65832::SELECT_CC_F64_PSEUDO:
+    return emitSelectCC(MI, MBB);
+  case M65832::SELECT_CC_FP_PSEUDO:
+  case M65832::SELECT_CC_FP_F32_PSEUDO:
+  case M65832::SELECT_CC_FP_F64_PSEUDO:
+    return emitSelectCCFP(MI, MBB);
   default:
     llvm_unreachable("Unexpected instruction for custom inserter");
   }
@@ -769,18 +989,22 @@ M65832TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 
 MachineBasicBlock *M65832TargetLowering::emitSelect(MachineInstr &MI,
                                                       MachineBasicBlock *MBB) const {
-  // This implements the SELECT pseudo by expanding to branches
-  // Strategy: branch on condition, copy appropriate value to destination
+  // This implements the SELECT pseudo by expanding to PHI nodes
+  // The condition flags are already set before this instruction
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
   DebugLoc DL = MI.getDebugLoc();
   
+  // Determine if this is a FP select
+  bool IsFP = (MI.getOpcode() == M65832::SELECT_F32 || 
+               MI.getOpcode() == M65832::SELECT_F64);
+  
   // Create new basic blocks
   MachineFunction *MF = MBB->getParent();
-  MachineBasicBlock *CopyMBB = MF->CreateMachineBasicBlock();
+  MachineBasicBlock *TrueMBB = MF->CreateMachineBasicBlock();
   MachineBasicBlock *SinkMBB = MF->CreateMachineBasicBlock();
   
   MachineFunction::iterator It = ++MBB->getIterator();
-  MF->insert(It, CopyMBB);
+  MF->insert(It, TrueMBB);
   MF->insert(It, SinkMBB);
   
   // Transfer successors from MBB to SinkMBB
@@ -788,9 +1012,9 @@ MachineBasicBlock *M65832TargetLowering::emitSelect(MachineInstr &MI,
   SinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
   
   // Set up edges
-  MBB->addSuccessor(CopyMBB);
+  MBB->addSuccessor(TrueMBB);
   MBB->addSuccessor(SinkMBB);
-  CopyMBB->addSuccessor(SinkMBB);
+  TrueMBB->addSuccessor(SinkMBB);
   
   // Get operands
   Register DstReg = MI.getOperand(0).getReg();
@@ -798,19 +1022,7 @@ MachineBasicBlock *M65832TargetLowering::emitSelect(MachineInstr &MI,
   Register FalseReg = MI.getOperand(2).getReg();
   int64_t CC = MI.getOperand(3).getImm();
   
-  // Convert registers to DP offsets (R0=$00, R1=$04, ...)
-  auto getDPOffset = [](Register Reg) -> unsigned {
-    unsigned RegNum = Reg - M65832::R0;
-    return RegNum * 4;
-  };
-  
-  unsigned DstDP = getDPOffset(DstReg);
-  unsigned TrueDP = getDPOffset(TrueReg);
-  unsigned FalseDP = getDPOffset(FalseReg);
-  
   // Map condition code to branch opcode
-  // We branch to CopyMBB when condition is TRUE to copy TrueReg
-  // We fall through to SinkMBB when FALSE (after copying FalseReg first)
   unsigned BrOpc;
   switch (CC) {
   case ISD::SETEQ:  BrOpc = M65832::BEQ; break;
@@ -826,24 +1038,171 @@ MachineBasicBlock *M65832TargetLowering::emitSelect(MachineInstr &MI,
   default:          BrOpc = M65832::BNE; break;
   }
   
-  // In MBB: First copy false value to dest, then conditionally branch
-  // This way if condition is false, we already have the right value
-  BuildMI(MBB, DL, TII.get(M65832::LDA_DP), M65832::A)
-      .addImm(FalseDP);
-  BuildMI(MBB, DL, TII.get(M65832::STA_DP))
-      .addReg(M65832::A, RegState::Kill)
-      .addImm(DstDP);
-  BuildMI(MBB, DL, TII.get(BrOpc)).addMBB(CopyMBB);
-  // Fall through to SinkMBB
+  // MBB: Branch to TrueMBB if condition is true, else fall through to SinkMBB
+  BuildMI(MBB, DL, TII.get(BrOpc)).addMBB(TrueMBB);
+  BuildMI(MBB, DL, TII.get(M65832::BRA)).addMBB(SinkMBB);
   
-  // CopyMBB: Copy true value (overwrites false value)
-  BuildMI(CopyMBB, DL, TII.get(M65832::LDA_DP), M65832::A)
-      .addImm(TrueDP);
-  BuildMI(CopyMBB, DL, TII.get(M65832::STA_DP))
-      .addReg(M65832::A, RegState::Kill)
-      .addImm(DstDP);
-  // Fall through to SinkMBB
+  // TrueMBB: Empty, just used for PHI
+  
+  // SinkMBB: Create PHI node
+  BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(M65832::PHI), DstReg)
+      .addReg(FalseReg).addMBB(MBB)
+      .addReg(TrueReg).addMBB(TrueMBB);
   
   MI.eraseFromParent();
   return SinkMBB;
+}
+
+MachineBasicBlock *M65832TargetLowering::emitSelectCC(MachineInstr &MI,
+                                                        MachineBasicBlock *MBB) const {
+  // SELECT_CC_PSEUDO: (dst, lhs, rhs, trueVal, falseVal, cc)
+  // Compares lhs vs rhs, selects trueVal if cc is true, else falseVal
+  const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+  
+  bool IsFP = (MI.getOpcode() == M65832::SELECT_CC_F32_PSEUDO || 
+               MI.getOpcode() == M65832::SELECT_CC_F64_PSEUDO);
+  
+  MachineFunction *MF = MBB->getParent();
+  MachineBasicBlock *TrueMBB = MF->CreateMachineBasicBlock();
+  MachineBasicBlock *SinkMBB = MF->CreateMachineBasicBlock();
+  
+  MachineFunction::iterator It = ++MBB->getIterator();
+  MF->insert(It, TrueMBB);
+  MF->insert(It, SinkMBB);
+  
+  SinkMBB->splice(SinkMBB->begin(), MBB, std::next(MI.getIterator()), MBB->end());
+  SinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
+  
+  MBB->addSuccessor(TrueMBB);
+  MBB->addSuccessor(SinkMBB);
+  TrueMBB->addSuccessor(SinkMBB);
+  
+  Register DstReg = MI.getOperand(0).getReg();
+  Register LHSReg = MI.getOperand(1).getReg();
+  Register RHSReg = MI.getOperand(2).getReg();
+  Register TrueReg = MI.getOperand(3).getReg();
+  Register FalseReg = MI.getOperand(4).getReg();
+  int64_t CC = MI.getOperand(5).getImm();
+
+  // Use fused compare-and-branch terminator to prevent flag clobbering
+  BuildMI(MBB, DL, TII.get(M65832::CMP_BR_CC))
+      .addReg(LHSReg)
+      .addReg(RHSReg)
+      .addImm(CC)
+      .addMBB(TrueMBB);
+  BuildMI(MBB, DL, TII.get(M65832::BRA)).addMBB(SinkMBB);
+  
+  // TrueMBB: Empty (just a branch target), falls through to SinkMBB
+  
+  // SinkMBB: PHI to select the result
+  const TargetRegisterClass *RC = IsFP ? 
+    (MI.getOpcode() == M65832::SELECT_CC_F64_PSEUDO ? &M65832::FPR64RegClass : &M65832::FPR32RegClass) :
+    &M65832::GPRRegClass;
+  
+  BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(M65832::PHI), DstReg)
+      .addReg(FalseReg).addMBB(MBB)
+      .addReg(TrueReg).addMBB(TrueMBB);
+  
+  MI.eraseFromParent();
+  return SinkMBB;
+}
+
+MachineBasicBlock *M65832TargetLowering::emitSelectCCFP(MachineInstr &MI,
+                                                          MachineBasicBlock *MBB) const {
+  // SELECT_CC_FP_PSEUDO: (dst, trueVal, falseVal, cc)
+  // Uses flags already set by FCMP (no comparison in this pseudo)
+  const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+  
+  MachineFunction *MF = MBB->getParent();
+  MachineBasicBlock *TrueMBB = MF->CreateMachineBasicBlock();
+  MachineBasicBlock *SinkMBB = MF->CreateMachineBasicBlock();
+  
+  MachineFunction::iterator It = ++MBB->getIterator();
+  MF->insert(It, TrueMBB);
+  MF->insert(It, SinkMBB);
+  
+  SinkMBB->splice(SinkMBB->begin(), MBB, std::next(MI.getIterator()), MBB->end());
+  SinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
+  
+  MBB->addSuccessor(TrueMBB);
+  MBB->addSuccessor(SinkMBB);
+  TrueMBB->addSuccessor(SinkMBB);
+  
+  // Get operands: dst, trueVal, falseVal, cc
+  Register DstReg = MI.getOperand(0).getReg();
+  Register TrueReg = MI.getOperand(1).getReg();
+  Register FalseReg = MI.getOperand(2).getReg();
+  int64_t CC = MI.getOperand(3).getImm();
+  
+  // Map condition code to branch opcode (flags already set by FCMP)
+  unsigned BrOpc;
+  switch (CC) {
+  case ISD::SETEQ:  BrOpc = M65832::BEQ; break;
+  case ISD::SETNE:  BrOpc = M65832::BNE; break;
+  case ISD::SETLT:  BrOpc = M65832::BMI; break;
+  case ISD::SETGE:  BrOpc = M65832::BPL; break;
+  case ISD::SETULT: BrOpc = M65832::BCC; break;
+  case ISD::SETUGE: BrOpc = M65832::BCS; break;
+  case ISD::SETGT:  BrOpc = M65832::BNE; break;
+  case ISD::SETLE:  BrOpc = M65832::BEQ; break;
+  case ISD::SETUGT: BrOpc = M65832::BNE; break;
+  case ISD::SETULE: BrOpc = M65832::BEQ; break;
+  default:          BrOpc = M65832::BNE; break;
+  }
+  
+  // MBB: Branch to TrueMBB if condition is true, else fall through
+  BuildMI(MBB, DL, TII.get(BrOpc)).addMBB(TrueMBB);
+  BuildMI(MBB, DL, TII.get(M65832::BRA)).addMBB(SinkMBB);
+  
+  // TrueMBB: Empty, just used for PHI
+  
+  // SinkMBB: Create PHI node
+  BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(M65832::PHI), DstReg)
+      .addReg(FalseReg).addMBB(MBB)
+      .addReg(TrueReg).addMBB(TrueMBB);
+  
+  MI.eraseFromParent();
+  return SinkMBB;
+}
+
+//===----------------------------------------------------------------------===//
+//                         Inline Assembly Support
+//===----------------------------------------------------------------------===//
+
+TargetLowering::ConstraintType
+M65832TargetLowering::getConstraintType(StringRef Constraint) const {
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    default:
+      break;
+    case 'r':  // General-purpose register
+    case 'a':  // Accumulator A
+      return C_RegisterClass;
+    }
+  }
+  return TargetLowering::getConstraintType(Constraint);
+}
+
+std::pair<unsigned, const TargetRegisterClass *>
+M65832TargetLowering::getRegForInlineAsmConstraint(
+    const TargetRegisterInfo *TRI, StringRef Constraint, MVT VT) const {
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    default:
+      break;
+    case 'r':
+      // General-purpose register
+      if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8)
+        return std::make_pair(0U, &M65832::GPRRegClass);
+      break;
+    case 'a':
+      // Accumulator A
+      if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8)
+        return std::make_pair(M65832::A, &M65832::ACCRegClass);
+      break;
+    }
+  }
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }

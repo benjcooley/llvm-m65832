@@ -127,12 +127,6 @@ bool M65832RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 }
 
 Register M65832RegisterInfo::getFrameRegister(const MachineFunction &MF) const {
-  const MachineFrameInfo &MFI = MF.getFrameInfo();
-  
-  // Use frame pointer if we have variable sized objects or it's taken
-  if (MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken())
-    return M65832::R29;
-  
-  // Otherwise use stack pointer
-  return M65832::SP;
+  // Use B as the frame base for locals/stack addressing
+  return M65832::B;
 }

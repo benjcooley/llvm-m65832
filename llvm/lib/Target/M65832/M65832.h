@@ -62,9 +62,15 @@ namespace M65832ISD {
     
     // Branch on condition code
     BR_CC,
+
+    // Fused compare-and-branch (single terminator)
+    BR_CC_CMP,
     
     // Select on condition code (integer - includes LHS/RHS for CMP)
     SELECT_CC,
+    
+    // Select on condition code (integer comparison, any result type)
+    SELECT_CC_MIXED,
     
     // Select on condition code (FP - uses glue from FCMP)
     SELECT_CC_FP,

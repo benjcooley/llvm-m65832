@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper for clang compile-only (no linking)
+exec /Users/benjamincooley/projects/llvm-m65832/build/bin/clang \
+    -target m65832-elf \
+    -ffreestanding \
+    "$@"

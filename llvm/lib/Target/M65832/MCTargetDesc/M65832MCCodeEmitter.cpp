@@ -147,8 +147,12 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   // Compare
   case M65832::CMP_DP:    return 0xC5;
   case M65832::CMP_IMM:   return 0xC9;
+  case M65832::SB_IMM:    return 0x22;
+  case M65832::SB_DP:     return 0x23;
   
   // Flags
+  case M65832::REP:       return 0xC2;
+  case M65832::SEP:       return 0xE2;
   case M65832::CLC:       return 0x18;
   case M65832::SEC:       return 0x38;
   case M65832::CLI:       return 0x58;

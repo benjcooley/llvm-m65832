@@ -5,10 +5,10 @@
 stdlib_dir = '/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib'
 
 [binaries]
-c = '/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/m65832-clang'
+c = '/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/m65832-cc'
+c_ld = '/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/m65832-ld'
 ar = 'ar'
-as = '/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/m65832-clang'
-ld = '/Users/benjamincooley/projects/llvm-m65832/build/bin/ld.lld'
+as = '/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/m65832-cc'
 strip = 'strip'
 ranlib = 'ranlib'
 exe_wrapper = ['/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/run-m65832.sh']

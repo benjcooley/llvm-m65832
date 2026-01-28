@@ -4,17 +4,120 @@
  * For baremetal operation, most syscalls are stubs that return errors.
  */
 
+#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdint.h>
 
-/* UART registers for console I/O */
-#define UART_BASE    0xFFE0
-#define UART_DATA    (*(volatile unsigned char *)(UART_BASE + 0))
-#define UART_STATUS  (*(volatile unsigned char *)(UART_BASE + 1))
-#define UART_TX_READY 0x01
-#define UART_RX_READY 0x02
+/* UART registers for console I/O (memory-mapped at 0x00FFF100) */
+#define UART_STATUS    (*(volatile uint32_t *)0x00FFF100)
+#define UART_TX_DATA   (*(volatile uint32_t *)0x00FFF104)
+#define UART_RX_DATA   (*(volatile uint32_t *)0x00FFF108)
+
+/* Status bits */
+#define UART_TX_READY  0x01
+#define UART_RX_AVAIL  0x02
+
+/* ============================================================================
+ * STDIO Support - stdin/stdout/stderr via UART
+ * ========================================================================= */
+
+static int uart_putc(char c, FILE *file) {
+    (void)file;
+    /* Wait for TX ready */
+    while (!(UART_STATUS & UART_TX_READY))
+        ;
+    UART_TX_DATA = (uint32_t)(unsigned char)c;
+    return (unsigned char)c;
+}
+
+static int uart_getc(FILE *file) {
+    (void)file;
+    /* Wait for RX available */
+    while (!(UART_STATUS & UART_RX_AVAIL))
+        ;
+    return (int)(UART_RX_DATA & 0xFF);
+}
+
+/* Create the stdio FILE structure */
+static FILE __stdio = FDEV_SETUP_STREAM(uart_putc, uart_getc, NULL, _FDEV_SETUP_RW);
+
+/* Define stdin, stdout, stderr */
+#ifdef __strong_reference
+#define STDIO_ALIAS(x) __strong_reference(stdin, x);
+#else
+#define STDIO_ALIAS(x) FILE * const x = &__stdio;
+#endif
+
+FILE * const stdin = &__stdio;
+STDIO_ALIAS(stdout);
+STDIO_ALIAS(stderr);
+
+/* ============================================================================
+ * Compiler Runtime Support (64-bit arithmetic)
+ * These are normally provided by compiler-rt/libgcc
+ * ========================================================================= */
+
+/* 64-bit multiplication */
+uint64_t __muldi3(uint64_t a, uint64_t b) {
+    uint32_t al = (uint32_t)a;
+    uint32_t ah = (uint32_t)(a >> 32);
+    uint32_t bl = (uint32_t)b;
+    uint32_t bh = (uint32_t)(b >> 32);
+    
+    uint64_t result = (uint64_t)al * bl;
+    result += ((uint64_t)al * bh) << 32;
+    result += ((uint64_t)ah * bl) << 32;
+    return result;
+}
+
+/* 64-bit unsigned division */
+uint64_t __udivdi3(uint64_t num, uint64_t den) {
+    if (den == 0) return 0;  /* Avoid div by zero */
+    
+    uint64_t quot = 0;
+    int bits = 64;
+    
+    /* Simple bit-by-bit division */
+    while (bits-- > 0) {
+        quot <<= 1;
+        if (num >= den) {
+            num -= den;
+            quot |= 1;
+        }
+        den >>= 1;
+    }
+    return quot;
+}
+
+/* 64-bit signed division */
+int64_t __divdi3(int64_t a, int64_t b) {
+    int neg = 0;
+    if (a < 0) { a = -a; neg = !neg; }
+    if (b < 0) { b = -b; neg = !neg; }
+    uint64_t result = __udivdi3((uint64_t)a, (uint64_t)b);
+    return neg ? -(int64_t)result : (int64_t)result;
+}
+
+/* 64-bit unsigned modulo */
+uint64_t __umoddi3(uint64_t num, uint64_t den) {
+    return num - __udivdi3(num, den) * den;
+}
+
+/* 64-bit signed modulo */
+int64_t __moddi3(int64_t a, int64_t b) {
+    int neg = 0;
+    if (a < 0) { a = -a; neg = 1; }
+    if (b < 0) { b = -b; }
+    uint64_t result = __umoddi3((uint64_t)a, (uint64_t)b);
+    return neg ? -(int64_t)result : (int64_t)result;
+}
+
+/* ============================================================================
+ * System Calls
+ * ========================================================================= */
 
 /* Heap management */
 extern char _end[];           /* Set by linker - end of BSS */
@@ -61,7 +164,7 @@ ssize_t _write(int fd, const void *buf, size_t len) {
         /* Wait for transmit ready */
         while (!(UART_STATUS & UART_TX_READY))
             ;
-        UART_DATA = p[i];
+        UART_TX_DATA = (uint32_t)(unsigned char)p[i];
     }
     
     return (ssize_t)len;
@@ -82,9 +185,9 @@ ssize_t _read(int fd, void *buf, size_t len) {
     size_t i;
     for (i = 0; i < len; i++) {
         /* Wait for receive ready */
-        while (!(UART_STATUS & UART_RX_READY))
+        while (!(UART_STATUS & UART_RX_AVAIL))
             ;
-        p[i] = UART_DATA;
+        p[i] = (char)(UART_RX_DATA & 0xFF);
         
         /* Echo and handle line endings */
         if (p[i] == '\r' || p[i] == '\n') {
@@ -101,11 +204,16 @@ ssize_t _read(int fd, void *buf, size_t len) {
  * _exit - Terminate the program
  */
 void __attribute__((noreturn)) _exit(int status) {
-    /* Store exit status in A register */
-    asm volatile("lda %0" : : "r"(status));
+    /* For baremetal, we just store the exit status and halt.
+     * Use a volatile write to prevent optimization. */
+    volatile int *exit_code = (volatile int *)0xFFFFFFFC;
+    *exit_code = status;
+    
     /* Stop the processor */
     asm volatile("stp");
+    
     /* Never returns */
+    for(;;) { }
     __builtin_unreachable();
 }
 

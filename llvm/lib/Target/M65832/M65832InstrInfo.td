@@ -44,12 +44,21 @@ def SDT_M65832CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_M65832Wrapper   : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>, SDTCisPtrTy<0>]>;
 def SDT_M65832Cmp       : SDTypeProfile<0, 2, [SDTCisSameAs<0, 1>]>;
 def SDT_M65832BrCC      : SDTypeProfile<0, 2, [SDTCisVT<0, OtherVT>, SDTCisVT<1, i32>]>;
+def SDT_M65832BrCCCmp   : SDTypeProfile<0, 4, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
+                                              SDTCisVT<2, i32>, SDTCisVT<3, OtherVT>]>;
 // SelectCC includes LHS/RHS so each select has its own comparison
 // Format: result = (lhs CC rhs) ? trueVal : falseVal
 // Operands: lhs, rhs, trueVal, falseVal, cc
+// Original integer-only version (LHS/RHS/True/False all same type)
 def SDT_M65832SelectCC  : SDTypeProfile<1, 5, [SDTCisSameAs<0, 1>, SDTCisSameAs<1, 2>, 
                                                SDTCisSameAs<2, 3>, SDTCisSameAs<3, 4>,
                                                SDTCisVT<5, i32>]>;
+
+// Mixed version: integer comparison (LHS/RHS i32), but result/true/false can be any type
+// Format: result = (i32 lhs CC i32 rhs) ? trueVal : falseVal
+def SDT_M65832SelectCCMixed : SDTypeProfile<1, 5, [SDTCisSameAs<0, 3>, SDTCisSameAs<3, 4>,
+                                                   SDTCisVT<1, i32>, SDTCisVT<2, i32>,
+                                                   SDTCisVT<5, i32>]>;
 
 //===----------------------------------------------------------------------===//
 // M65832 Specific Nodes
@@ -74,9 +83,14 @@ def M65832fcmp    : SDNode<"M65832ISD::FCMP", SDT_M65832Cmp, [SDNPOutGlue]>;
 
 def M65832brcc    : SDNode<"M65832ISD::BR_CC", SDT_M65832BrCC,
                            [SDNPHasChain, SDNPInGlue]>;
+def M65832brcccmp : SDNode<"M65832ISD::BR_CC_CMP", SDT_M65832BrCCCmp,
+                           [SDNPHasChain]>;
 
 // SELECT_CC now includes LHS/RHS for comparison, no glue needed
 def M65832selectcc : SDNode<"M65832ISD::SELECT_CC", SDT_M65832SelectCC, []>;
+
+// SELECT_CC_MIXED: integer comparison with any result type (for f32/f64 results)
+def M65832selectccmixed : SDNode<"M65832ISD::SELECT_CC_MIXED", SDT_M65832SelectCCMixed, []>;
 
 // SELECT_CC_FP uses glue from FCMP (FP comparisons don't have flag-clobbering issue)
 def SDT_M65832SelectCCFP : SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>, SDTCisSameAs<1, 2>, SDTCisVT<3, i32>]>;
@@ -170,6 +184,13 @@ let usesCustomInserter = 1, Uses = [SR] in {
   def SELECT : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2, i32imm:$cc),
                       "# SELECT $dst, $src1, $src2, $cc",
                       []>;
+  // FP versions for selecting floating-point values
+  def SELECT_F32 : Pseudo<(outs FPR32:$dst), (ins FPR32:$src1, FPR32:$src2, i32imm:$cc),
+                          "# SELECT_F32 $dst, $src1, $src2, $cc",
+                          []>;
+  def SELECT_F64 : Pseudo<(outs FPR64:$dst), (ins FPR64:$src1, FPR64:$src2, i32imm:$cc),
+                          "# SELECT_F64 $dst, $src1, $src2, $cc",
+                          []>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -225,6 +246,11 @@ def LA_BA : Pseudo<(outs GPR:$dst), (ins i32imm:$addr),
                    "# la.ba $dst, $addr",
                    [(set GPR:$dst, (M65832Wrapper tblockaddress:$addr))]>;
 
+// Load constant pool address into GPR (for FP constants, etc.)
+def LA_CP : Pseudo<(outs GPR:$dst), (ins i32imm:$addr),
+                   "# la.cp $dst, $addr",
+                   [(set GPR:$dst, (M65832Wrapper tconstpool:$addr))]>;
+
 //===----------------------------------------------------------------------===//
 // ALU Pseudo Instructions (GPR to GPR via accumulator) - LEGACY
 // These are expanded in M65832InstrInfo::expandPostRAPseudo
@@ -244,23 +270,23 @@ let isCodeGenOnly = 1, Defs = [A] in {
                       "# sub $dst, $src1, $src2",
                       [(set GPR:$dst, (sub GPR:$src1, GPR:$src2))]>;
 
-  // AND: dst = src1 & src2 (legacy 3-operand form)
+  // AND: dst = src1 & src2 (A-centric form - preferred)
   // Expands to: LDA src1; AND src2; STA dst
   def AND_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "# and $dst, $src1, $src2",
-                       []>;  // Pattern removed - use ANDR_DP
+                       [(set GPR:$dst, (and GPR:$src1, GPR:$src2))]>;
 
-  // OR: dst = src1 | src2 (legacy 3-operand form)
+  // OR: dst = src1 | src2 (A-centric form - preferred)
   // Expands to: LDA src1; ORA src2; STA dst
   def ORA_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "# ora $dst, $src1, $src2",
-                       []>;  // Pattern removed - use ORAR_DP
+                       [(set GPR:$dst, (or GPR:$src1, GPR:$src2))]>;
 
-  // XOR: dst = src1 ^ src2 (legacy 3-operand form)
+  // XOR: dst = src1 ^ src2 (A-centric form - preferred)
   // Expands to: LDA src1; EOR src2; STA dst
   def EOR_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "# eor $dst, $src1, $src2",
-                       []>;  // Pattern removed - use EORR_DP
+                       [(set GPR:$dst, (xor GPR:$src1, GPR:$src2))]>;
 
   // ADD immediate (legacy) - patterns removed, use ADDR_IMM
   def ADDI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
@@ -272,20 +298,20 @@ let isCodeGenOnly = 1, Defs = [A] in {
                        "# subi $dst, $src, $imm",
                        [(set GPR:$dst, (sub GPR:$src, imm:$imm))]>;
 
-  // AND immediate (legacy) - patterns removed, use ANDR_IMM
+  // AND immediate (A-centric form - preferred)
   def ANDI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                         "# andi $dst, $src, $imm",
-                        []>;
+                        [(set GPR:$dst, (and GPR:$src, imm:$imm))]>;
 
-  // OR immediate (legacy) - patterns removed, use ORAR_IMM
+  // OR immediate (A-centric form - preferred)
   def ORI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                        "# ori $dst, $src, $imm",
-                       []>;
+                       [(set GPR:$dst, (or GPR:$src, imm:$imm))]>;
 
-  // XOR immediate (legacy) - patterns removed, use EORR_IMM
+  // XOR immediate (A-centric form - preferred)
   def XORI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                         "# xori $dst, $src, $imm",
-                        []>;
+                        [(set GPR:$dst, (xor GPR:$src, imm:$imm))]>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -383,24 +409,24 @@ let Defs = [SR] in {
     let Constraints = "$src1 = $dst";
   }
 
-  // AND: dest = dest & src
+  // AND: dest = dest & src (extended form - avoid, prefer AND_GPR)
   def ANDR_DP : FE8_DP<0x84, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "AND.L\t$dst,$src2",
-                       [(set GPR:$dst, (and GPR:$src1, GPR:$src2))]> {
+                       []> {  // No pattern - prefer A-centric AND_GPR
     let Constraints = "$src1 = $dst";
   }
 
-  // ORA: dest = dest | src
+  // ORA: dest = dest | src (extended form - avoid, prefer ORA_GPR)
   def ORAR_DP : FE8_DP<0x85, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "ORA.L\t$dst,$src2",
-                       [(set GPR:$dst, (or GPR:$src1, GPR:$src2))]> {
+                       []> {  // No pattern - prefer A-centric ORA_GPR
     let Constraints = "$src1 = $dst";
   }
 
-  // EOR: dest = dest ^ src
+  // EOR: dest = dest ^ src (extended form - avoid, prefer EOR_GPR)
   def EORR_DP : FE8_DP<0x86, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "EOR.L\t$dst,$src2",
-                       [(set GPR:$dst, (xor GPR:$src1, GPR:$src2))]> {
+                       []> {  // No pattern - prefer A-centric EOR_GPR
     let Constraints = "$src1 = $dst";
   }
 
@@ -432,19 +458,19 @@ let Defs = [SR] in {
 
   def ANDR_IMM : FE8_IMM<0x84, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                          "AND.L\t$dst,#$imm",
-                         [(set GPR:$dst, (and GPR:$src, imm:$imm))]> {
+                         []> {  // No pattern - prefer A-centric ANDI_GPR
     let Constraints = "$src = $dst";
   }
 
   def ORAR_IMM : FE8_IMM<0x85, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                          "ORA.L\t$dst,#$imm",
-                         [(set GPR:$dst, (or GPR:$src, imm:$imm))]> {
+                         []> {  // No pattern - prefer A-centric ORI_GPR
     let Constraints = "$src = $dst";
   }
 
   def EORR_IMM : FE8_IMM<0x86, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                          "EOR.L\t$dst,#$imm",
-                         [(set GPR:$dst, (xor GPR:$src, imm:$imm))]> {
+                         []> {  // No pattern - prefer A-centric XORI_GPR
     let Constraints = "$src = $dst";
   }
 
@@ -496,6 +522,16 @@ let Defs = [SR] in {
   def SHLR_VAR : FE9<0x1F, (outs GPR:$dst), (ins GPR:$src, ACC:$amt),
                      "SHL\t$dst,$src,A",
                      [(set GPR:$dst, (shl GPR:$src, ACC:$amt))]>;
+  
+  // ROL with variable amount (by A): op=3, cnt=$1F -> $60|$1F = $7F
+  def ROLR_VAR : FE9<0x7F, (outs GPR:$dst), (ins GPR:$src, ACC:$amt),
+                     "ROL\t$dst,$src,A",
+                     [(set GPR:$dst, (rotl GPR:$src, ACC:$amt))]>;
+  
+  // ROR with variable amount (by A): op=4, cnt=$1F -> $80|$1F = $9F
+  def RORR_VAR : FE9<0x9F, (outs GPR:$dst), (ins GPR:$src, ACC:$amt),
+                     "ROR\t$dst,$src,A",
+                     [(set GPR:$dst, (rotr GPR:$src, ACC:$amt))]>;
 
   def SHRR_VAR : FE9<0x3F, (outs GPR:$dst), (ins GPR:$src, ACC:$amt),
                      "SHR\t$dst,$src,A",
@@ -576,7 +612,7 @@ let isCodeGenOnly = 1, Defs = [A, SR] in {
 // Operand for memory addresses (global, external symbol, frame index)
 def memsrc : Operand<i32> {
   let PrintMethod = "printMemOperand";
-  let MIOperandInfo = (ops GPR, i32imm);
+  let MIOperandInfo = (ops GPRAddr, i32imm);
 }
 
 // Load from global/memory address into GPR
@@ -950,6 +986,8 @@ def CMP_IMM : F8<0xC9, (outs), (ins ACC:$lhs, i32imm:$rhs),
 // Flag Instructions
 //===----------------------------------------------------------------------===//
 
+def REP : F2<0xC2, (outs), (ins imm8:$imm), "REP\t#$imm", []> { let Defs = [SR]; }
+def SEP : F2<0xE2, (outs), (ins imm8:$imm), "SEP\t#$imm", []> { let Defs = [SR]; }
 def CLC : F0<0x18, (outs), (ins), "CLC", []> { let Defs = [SR]; }
 def SEC : F0<0x38, (outs), (ins), "SEC", []> { let Defs = [SR]; }
 def CLI : F0<0x58, (outs), (ins), "CLI", []> { let Defs = [SR]; }
@@ -999,10 +1037,41 @@ let isCodeGenOnly = 1, isBranch = 1, isTerminator = 1 in {
   }
 }
 
-// Pseudo for conditional select - expanded in expandPostRAPseudo
+// Fused compare-and-branch (single terminator) to avoid flag clobbering
+let isCodeGenOnly = 1, isBranch = 1, isTerminator = 1 in {
+  def BR_CC_CMP_PSEUDO : Pseudo<(outs),
+                                (ins GPR:$lhs, GPR:$rhs, i32imm:$cc, brtarget:$target),
+                                "# br_cc_cmp $lhs, $rhs, $cc, $target",
+                                [(M65832brcccmp GPR:$lhs, GPR:$rhs, imm:$cc, bb:$target)]> {
+    let Defs = [SR];
+  }
+
+  def BR_CC_CMP_IMM_PSEUDO : Pseudo<(outs),
+                                    (ins GPR:$lhs, i32imm:$rhs, i32imm:$cc, brtarget:$target),
+                                    "# br_cc_cmp_imm $lhs, $rhs, $cc, $target",
+                                    [(M65832brcccmp GPR:$lhs, imm:$rhs, imm:$cc, bb:$target)]> {
+    let Defs = [SR];
+  }
+}
+
+// Fused compare-and-branch pseudo - combines CMP and Bcc into single terminator
+// This ensures PHI elimination inserts copies BEFORE the compare, not between
+// compare and branch. Expanded in expandPostRAPseudo to CMP + Bcc sequence.
+let isCodeGenOnly = 1, isBranch = 1, isTerminator = 1 in {
+  def CMP_BR_CC : Pseudo<(outs), (ins GPR:$lhs, GPR:$rhs, i32imm:$cc, brtarget:$target),
+                         "# cmp_br_cc $lhs, $rhs, $cc, $target",
+                         []> {
+    let Defs = [SR];
+  }
+}
+
+// Pseudo for conditional select - expanded via usesCustomInserter in ISelLowering
 // dst = (lhs cc rhs) ? trueVal : falseVal
-// Includes LHS/RHS so we can emit CMP inside the expansion, ensuring
-// each select has its own comparison (flags can be clobbered between selects)
+// The custom inserter creates basic blocks with the structure:
+//   MBB:        copy false->dst; CMP lhs,rhs; Bcc TrueMBB; (fallthrough to SinkMBB)
+//   TrueMBB:    copy true->dst; (fallthrough to SinkMBB)  
+//   SinkMBB:    ... rest of code ...
+// This ensures the CMP and branch are always adjacent with no PHI copies between them.
 let isCodeGenOnly = 1 in {
   def SELECT_CC_PSEUDO : Pseudo<(outs GPR:$dst), 
                                 (ins GPR:$lhs, GPR:$rhs, GPR:$trueVal, GPR:$falseVal, i32imm:$cc),
@@ -1010,6 +1079,26 @@ let isCodeGenOnly = 1 in {
                                 [(set GPR:$dst, (M65832selectcc GPR:$lhs, GPR:$rhs, 
                                                                 GPR:$trueVal, GPR:$falseVal,
                                                                 imm:$cc))]> {
+    let Defs = [A, SR];
+  }
+  
+  // F32 version - integer comparison, f32 result
+  def SELECT_CC_F32_PSEUDO : Pseudo<(outs FPR32:$dst), 
+                                    (ins GPR:$lhs, GPR:$rhs, FPR32:$trueVal, FPR32:$falseVal, i32imm:$cc),
+                                    "# select_cc_f32 $dst, $lhs, $rhs, $trueVal, $falseVal, $cc",
+                                    [(set FPR32:$dst, (M65832selectccmixed GPR:$lhs, GPR:$rhs,
+                                                                           FPR32:$trueVal, FPR32:$falseVal,
+                                                                           imm:$cc))]> {
+    let Defs = [A, SR];
+  }
+  
+  // F64 version - integer comparison, f64 result
+  def SELECT_CC_F64_PSEUDO : Pseudo<(outs FPR64:$dst), 
+                                    (ins GPR:$lhs, GPR:$rhs, FPR64:$trueVal, FPR64:$falseVal, i32imm:$cc),
+                                    "# select_cc_f64 $dst, $lhs, $rhs, $trueVal, $falseVal, $cc",
+                                    [(set FPR64:$dst, (M65832selectccmixed GPR:$lhs, GPR:$rhs,
+                                                                           FPR64:$trueVal, FPR64:$falseVal,
+                                                                           imm:$cc))]> {
     let Defs = [A, SR];
   }
   
@@ -1022,6 +1111,27 @@ let isCodeGenOnly = 1 in {
                                                                      imm:$cc))]> {
     let Uses = [SR];
     let Defs = [A];
+    let usesCustomInserter = 1;
+  }
+  
+  // FP comparison with F32 result
+  def SELECT_CC_FP_F32_PSEUDO : Pseudo<(outs FPR32:$dst), 
+                                       (ins FPR32:$trueVal, FPR32:$falseVal, i32imm:$cc),
+                                       "# select_cc_fp_f32 $dst, $trueVal, $falseVal, $cc",
+                                       [(set FPR32:$dst, (M65832selectccfp FPR32:$trueVal, FPR32:$falseVal,
+                                                                           imm:$cc))]> {
+    let Uses = [SR];
+    let usesCustomInserter = 1;
+  }
+  
+  // FP comparison with F64 result
+  def SELECT_CC_FP_F64_PSEUDO : Pseudo<(outs FPR64:$dst), 
+                                       (ins FPR64:$trueVal, FPR64:$falseVal, i32imm:$cc),
+                                       "# select_cc_fp_f64 $dst, $trueVal, $falseVal, $cc",
+                                       [(set FPR64:$dst, (M65832selectccfp FPR64:$trueVal, FPR64:$falseVal,
+                                                                           imm:$cc))]> {
+    let Uses = [SR];
+    let usesCustomInserter = 1;
   }
 }
 
@@ -1050,11 +1160,14 @@ let isCall = 1 in {
   def JSR : F3<0x20, (outs), (ins calltarget:$target),
               "JSR\t$target",
               [(M65832call tglobaladdr:$target)]> {
+    // Caller-saved GPRs and FPU registers
     let Defs = [SP, R0, R1, R2, R3, R4, R5, R6, R7,
                 R8, R9, R10, R11, R12, R13, R14, R15, R30,
                 R32, R33, R34, R35, R36, R37, R38, R39,
                 R40, R41, R42, R43, R44, R45, R46, R47,
-                A, X, Y];
+                A, X, Y,
+                F0, F1, F2, F3, F4, F5, F6, F7,
+                F8, F9, F10, F11, F12, F13];
     let Uses = [SP];
   }
   
@@ -1064,11 +1177,14 @@ let isCall = 1 in {
   def JSR_IND : Pseudo<(outs), (ins GPR:$target),
                        "JSR\t($target)",
                        [(M65832call GPR:$target)]> {
+    // Caller-saved GPRs and FPU registers
     let Defs = [SP, R0, R1, R2, R3, R4, R5, R6, R7,
                 R8, R9, R10, R11, R12, R13, R14, R15, R30,
                 R32, R33, R34, R35, R36, R37, R38, R39,
                 R40, R41, R42, R43, R44, R45, R46, R47,
-                A, X, Y];
+                A, X, Y,
+                F0, F1, F2, F3, F4, F5, F6, F7,
+                F8, F9, F10, F11, F12, F13];
     let Uses = [SP];
   }
 }
@@ -1084,11 +1200,14 @@ def : Pat<(M65832call GPR:$target), (JSR_IND GPR:$target)>;
 let isCall = 1, isCodeGenOnly = 1 in
 def JSR_DP_IND : F1<0xFC, (outs), (ins DPOp:$target),
                     "JSR\t($target)", []> {
+  // Caller-saved GPRs and FPU registers
   let Defs = [SP, R0, R1, R2, R3, R4, R5, R6, R7,
               R8, R9, R10, R11, R12, R13, R14, R15, R30,
               R32, R33, R34, R35, R36, R37, R38, R39,
               R40, R41, R42, R43, R44, R45, R46, R47,
-              A, X, Y];
+              A, X, Y,
+              F0, F1, F2, F3, F4, F5, F6, F7,
+              F8, F9, F10, F11, F12, F13];
   let Uses = [SP];
 }
 
@@ -1268,6 +1387,10 @@ def NOP : F0<0xEA, (outs), (ins), "nop", []>;
 def STP : F0<0xDB, (outs), (ins), "stp", []>;  // Stop processor
 def WAI : F0<0xCB, (outs), (ins), "wai", []>;  // Wait for interrupt
 
+// System Base/Direct registers (extended)
+def SB_IMM : F7_Imm32<0x22, (outs), (ins i32imm:$imm), "SB\t#$imm", []>;
+def SB_DP  : F7_DP<0x23, (outs), (ins DPOp:$src), "SB\t$src", []>;
+
 //===----------------------------------------------------------------------===//
 // FPU Instructions
 //
@@ -1292,6 +1415,11 @@ let isCodeGenOnly = 1, mayLoad = 1 in {
                             "# ldf32 $dst, $addr",
                             [(set FPR32:$dst, (load (M65832Wrapper tglobaladdr:$addr)))]>;
   
+  // Load f32 from constant pool (for FP literals like 3.14f)
+  def LDF32_CP : Pseudo<(outs FPR32:$dst), (ins i32imm:$addr),
+                        "# ldf32.cp $dst, $addr",
+                        [(set FPR32:$dst, (load (M65832Wrapper tconstpool:$addr)))]>;
+  
   def LDF32 : Pseudo<(outs FPR32:$dst), (ins memsrc:$addr),
                      "# ldf32 $dst, $addr",
                      [(set FPR32:$dst, (load ADDRri:$addr))]>;
@@ -1313,6 +1441,11 @@ let isCodeGenOnly = 1, mayLoad = 1 in {
   def LDF64_GLOBAL : Pseudo<(outs FPR64:$dst), (ins i32imm:$addr),
                             "# ldf64 $dst, $addr",
                             [(set FPR64:$dst, (load (M65832Wrapper tglobaladdr:$addr)))]>;
+  
+  // Load f64 from constant pool (for FP literals like 3.14)
+  def LDF64_CP : Pseudo<(outs FPR64:$dst), (ins i32imm:$addr),
+                        "# ldf64.cp $dst, $addr",
+                        [(set FPR64:$dst, (load (M65832Wrapper tconstpool:$addr)))]>;
   
   def LDF64 : Pseudo<(outs FPR64:$dst), (ins memsrc:$addr),
                      "# ldf64 $dst, $addr",

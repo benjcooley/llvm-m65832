@@ -24,19 +24,28 @@ extern int main(void);
 /* Exit function */
 extern void _exit(int status) __attribute__((noreturn));
 
+/* Forward declaration */
+void __attribute__((noreturn)) __crt_init(void);
+
 /*
- * _start - Entry point
+ * _start - Entry point (naked function - asm only)
  *
- * Called by reset vector. Initializes BSS, data, and C library,
- * then calls main() and exits with its return value.
+ * Called by reset vector. Sets up stack and jumps to C init code.
  */
 void __attribute__((naked, noreturn, section(".text.startup"))) _start(void) {
-    /* Set up stack pointer */
     asm volatile(
-        "ldx #_stack_top\n\t"
-        "txs\n\t"
+        "ldx #_stack_top\n\t"  /* Load stack top address */
+        "txs\n\t"              /* Set stack pointer */
+        "jmp __crt_init\n\t"   /* Jump to C initialization */
     );
-    
+}
+
+/*
+ * __crt_init - C Runtime initialization
+ *
+ * Initializes BSS, data, and C library, then calls main().
+ */
+void __attribute__((noreturn)) __crt_init(void) {
     /* Initialize BSS to zero */
     uint32_t *bss = _bss_start;
     while (bss < _bss_end) {
