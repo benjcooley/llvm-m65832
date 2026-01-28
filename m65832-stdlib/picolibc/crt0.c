@@ -36,6 +36,8 @@ void __attribute__((naked, noreturn, section(".text.startup"))) _start(void) {
     asm volatile(
         "ldx #_stack_top\n\t"  /* Load stack top address */
         "txs\n\t"              /* Set stack pointer */
+        "lda #0x4000\n\t"      /* Direct page base address */
+        ".byte 0x5B\n\t"       /* TCD - Set D register for DP addressing */
         "jmp __crt_init\n\t"   /* Jump to C initialization */
     );
 }

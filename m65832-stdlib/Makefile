@@ -11,9 +11,9 @@
 #   make test               # Build test program
 
 # Toolchain
-LLVM_BUILD ?= /Users/benjamincooley/projects/llvm-m65832/build
-CC = $(LLVM_BUILD)/bin/clang-23
-AS = $(LLVM_BUILD)/bin/clang-23
+LLVM_BUILD ?= /Users/benjamincooley/projects/llvm-m65832/build-fast
+CC = $(LLVM_BUILD)/bin/clang
+AS = $(LLVM_BUILD)/bin/clang
 AR = ar
 LD = $(LLVM_BUILD)/bin/ld.lld
 

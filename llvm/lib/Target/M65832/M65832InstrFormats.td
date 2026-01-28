@@ -126,6 +126,13 @@ class F8<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
   let Opcode = opcode;
 }
 
+// FExt0: Extended instruction with no operands (2 bytes: 0x02 + subop)
+class FExt0<bits<8> subop, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 2;
+  let Opcode = subop;
+}
+
 // F9: Absolute 16-bit (3 bytes total)
 class F9<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {

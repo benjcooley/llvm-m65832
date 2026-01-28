@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick test to verify M65832 compiler works with libc
 
-CC=/Users/benjamincooley/projects/llvm-m65832/build/bin/clang-23
+CC=/Users/benjamincooley/projects/llvm-m65832/build-fast/bin/clang
 PLATFORM=/Users/benjamincooley/projects/m65832/emu/platform
 
 echo "Testing M65832 compiler with libc..."

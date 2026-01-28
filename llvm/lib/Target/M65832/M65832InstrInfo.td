@@ -1263,6 +1263,21 @@ def PLY : F0<0x7A, (outs), (ins), "PLY", []> {
   let mayLoad = 1;
 }
 
+// Push/Pull B register (needed for JSR/RTS with B-relative addressing in 32-bit mode)
+// In 32-bit mode, PHB pushes 32-bit B, PLB pulls 32-bit B
+// Standard 65816 opcodes: PHB=0x8B, PLB=0xAB
+def PHB : F0<0x8B, (outs), (ins), "PHB", []> {
+  let Defs = [SP];
+  let Uses = [SP, B];
+  let mayStore = 1;
+}
+
+def PLB : F0<0xAB, (outs), (ins), "PLB", []> {
+  let Defs = [SP, B];
+  let Uses = [SP];
+  let mayLoad = 1;
+}
+
 def PHP : F0<0x08, (outs), (ins), "php", []> {
   let Defs = [SP];
   let Uses = [SP, SR];

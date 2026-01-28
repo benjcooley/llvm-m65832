@@ -52,29 +52,13 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
     DL = MBBI->getDebugLoc();
 
   uint64_t StackSize = MFI.getStackSize();
-  bool UseFP = hasFP(MF);
 
-  // If using frame pointer, save old FP first, then set up new FP
-  // This must happen BEFORE stack allocation so RTS can find return address
-  if (UseFP) {
-    // Push old FP value to stack
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::LDA_DP), M65832::A)
-        .addImm(M65832InstrInfo::getDPOffset(29)); // Load old R29
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::PHA))
-        .addReg(M65832::A, RegState::Kill);
-    
-    // Set FP = SP (FP now points to saved FP location)
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
-        .addReg(M65832::X);
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::STA_DP))
-        .addReg(M65832::A)
-        .addImm(M65832InstrInfo::getDPOffset(29)); // R29 = FP = SP
-  }
+  // Save B register (B is the frame pointer in M65832)
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::PHB));
 
+  // Allocate stack frame if needed
   if (StackSize != 0) {
     // Adjust stack pointer: SP = SP - StackSize
-    // We need to do this via A since M65832 can't subtract from SP directly
     // TSX; TXA; SEC; SBC #stacksize; TAX; TXS
     BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
     BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
@@ -89,16 +73,16 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
         .addReg(M65832::X);
   }
 
-  // Set B = SP (frame base) using SB dp via R29 slot
-  // Keep R29 updated with SP so SB dp loads the correct base.
+  // Set B = SP (frame base for B+offset addressing of locals)
+  // Use DP slot for R30 as temporary to transfer SP to B (R30 is caller-saved)
   BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
   BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
       .addReg(M65832::X);
   BuildMI(MBB, MBBI, DL, TII.get(M65832::STA_DP))
       .addReg(M65832::A)
-      .addImm(M65832InstrInfo::getDPOffset(29));
+      .addImm(M65832InstrInfo::getDPOffset(30));  // temp storage in R30 slot
   BuildMI(MBB, MBBI, DL, TII.get(M65832::SB_DP))
-      .addImm(M65832InstrInfo::getDPOffset(29));
+      .addImm(M65832InstrInfo::getDPOffset(30));
 }
 
 void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
@@ -113,26 +97,10 @@ void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
     DL = MBBI->getDebugLoc();
 
   uint64_t StackSize = MFI.getStackSize();
-  bool UseFP = hasFP(MF);
 
-  if (UseFP) {
-    // Restore SP from FP (SP now points to saved FP location on stack)
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::LDA_DP), M65832::A)
-        .addImm(M65832InstrInfo::getDPOffset(29)); // Load FP
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::TAX), M65832::X)
-        .addReg(M65832::A);
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::TXS))
-        .addReg(M65832::X);
-    
-    // Pop old FP value from stack
-    // After this, SP points to return address
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::PLA), M65832::A);
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(M65832InstrInfo::getDPOffset(29)); // Restore old R29
-  } else if (StackSize > 0) {
-    // No FP: Restore SP by adding StackSize
-    // SP = SP + StackSize puts SP back to where return address is
+  // Deallocate stack frame if needed
+  if (StackSize > 0) {
+    // Restore SP by adding StackSize: SP = SP + StackSize
     BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
     BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
         .addReg(M65832::X);
@@ -145,6 +113,9 @@ void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
     BuildMI(MBB, MBBI, DL, TII.get(M65832::TXS))
         .addReg(M65832::X);
   }
+  
+  // Restore B register (frame pointer) before RTS
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::PLB));
 }
 
 MachineBasicBlock::iterator M65832FrameLowering::eliminateCallFramePseudoInstr(
@@ -200,10 +171,8 @@ void M65832FrameLowering::determineCalleeSaves(MachineFunction &MF,
                                                 RegScavenger *RS) const {
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
   
-  // If using frame pointer, R29 is saved/restored in prologue/epilogue,
-  // NOT in the general callee-save mechanism. Remove it from SavedRegs.
-  if (hasFP(MF))
-    SavedRegs.reset(M65832::R29);
+  // R29 is kernel-reserved, so it should never be in SavedRegs
+  // B register (frame pointer) is handled via PHB/PLB in prologue/epilogue
 }
 
 StackOffset
@@ -238,13 +207,8 @@ bool M65832FrameLowering::spillCalleeSavedRegisters(
 
   // Save each callee-saved register by pushing to stack
   // For M65832, we save GPRs via: LDA $dp; PHA
-  // Note: R29 (FP) is handled separately in prologue/epilogue when hasFP
   for (const CalleeSavedInfo &Info : CSI) {
     Register Reg = Info.getReg();
-    
-    // Skip R29 if using frame pointer - it's handled in prologue/epilogue
-    if (Reg == M65832::R29 && hasFP(MF))
-      continue;
     
     // Get the DP offset for this register
     unsigned RegNum = Reg - M65832::R0;
@@ -274,13 +238,8 @@ bool M65832FrameLowering::restoreCalleeSavedRegisters(
     DL = MI->getDebugLoc();
 
   // Restore each callee-saved register by popping from stack (reverse order)
-  // Note: R29 (FP) is handled separately in prologue/epilogue when hasFP
   for (auto I = CSI.rbegin(), E = CSI.rend(); I != E; ++I) {
     Register Reg = I->getReg();
-    
-    // Skip R29 if using frame pointer - it's handled in epilogue
-    if (Reg == M65832::R29 && hasFP(MF))
-      continue;
     
     // Get the DP offset for this register
     unsigned RegNum = Reg - M65832::R0;

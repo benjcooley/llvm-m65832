@@ -197,6 +197,8 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::PLY:       return 0x7A;
   case M65832::PHP:       return 0x08;
   case M65832::PLP:       return 0x28;
+  case M65832::PHB:       return 0x8B;
+  case M65832::PLB:       return 0xAB;
   
   // Misc
   case M65832::NOP:       return 0xEA;
@@ -340,6 +342,7 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   };
 
   // Extended instructions ($02 prefix)
+  // Note: PHB and PLB are NOT extended - they use standard 65816 opcodes 0x8B and 0xAB
   switch (MIOp) {
   case M65832::MUL_DP:
   case M65832::MULU_DP:
@@ -359,6 +362,22 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   case M65832::TAT: {
     emitByte(EXT_PREFIX, CB);
     emitByte(Opcode, CB);
+    return;
+  }
+  case M65832::SB_DP: {
+    // SB dp - Set B from direct page (3 bytes: $02 $23 dp)
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    const MCOperand &MO = MI.getOperand(0);
+    emitDPOp(MO, 2);
+    return;
+  }
+  case M65832::SB_IMM: {
+    // SB #imm32 - Set B from immediate (6 bytes: $02 $22 imm32)
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    const MCOperand &MO = MI.getOperand(0);
+    emitImm32(MO, 2);
     return;
   }
   case M65832::TRAP: {

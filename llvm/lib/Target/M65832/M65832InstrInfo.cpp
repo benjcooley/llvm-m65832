@@ -1094,8 +1094,6 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::LDF64: {
     // Load float from memory (base+offset) into FPU register
     // Use register-indirect mode: LDF Fn, (Rm) - but Rm must be R0-R15!
-    // Note: Using 64-bit LDF for both f32/f64 until assembler supports LDF.S properly
-    // The FPU handles the correct size based on arithmetic instructions (.S vs .D)
     Register DstReg = MI.getOperand(0).getReg();
     Register BaseReg = MI.getOperand(1).getReg();
     int64_t Offset = 0;
@@ -1103,10 +1101,9 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       Offset = MI.getOperand(2).getImm();
     }
     
-    // TODO: Use LDF_S_ind for f32 when assembler properly supports LDF.S
-    // bool IsSingle = (MI.getOpcode() == M65832::LDF32);
-    // unsigned LoadOpc = IsSingle ? M65832::LDF_S_ind : M65832::LDF_ind;
-    unsigned LoadOpc = M65832::LDF_ind;
+    // Use LDF.S for f32 (32-bit), LDF for f64 (64-bit)
+    bool IsSingle = (MI.getOpcode() == M65832::LDF32);
+    unsigned LoadOpc = IsSingle ? M65832::LDF_S_ind : M65832::LDF_ind;
     
     // Check if BaseReg is in R0-R15 range (required for LDF/STF indirect)
     bool BaseIsLowReg = (BaseReg >= M65832::R0 && BaseReg <= M65832::R15);
@@ -1116,13 +1113,17 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       BuildMI(MBB, MI, DL, get(LoadOpc), DstReg)
           .addReg(BaseReg);
     } else if (BaseReg == M65832::B) {
-      // B register: can use direct B+offset addressing or need to compute address
-      // For now, compute address into R0 and use indirect
-      // LDA B+Offset (load effective address)
-      // STA R0
-      // LDF Fn, (R0)
-      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
-          .addImm(Offset);
+      // B register: compute effective address B+Offset into R0
+      // The frame base was saved to R30's DP slot during prologue (STA R30; SB R30)
+      // Load frame base from R30 slot, add offset, store to R0 for indirect load
+      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A)
+          .addImm(getDPOffset(30)); // R30 contains frame base
+      if (Offset != 0) {
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(Offset);
+      }
       BuildMI(MBB, MI, DL, get(M65832::STA_DP))
           .addReg(M65832::A, RegState::Kill)
           .addImm(getDPOffset(0)); // R0
@@ -1181,7 +1182,6 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::STF64: {
     // Store float from FPU register to memory (base+offset)
     // Use register-indirect mode: STF Fn, (Rm) - but Rm must be R0-R15!
-    // Note: Using 64-bit STF for both f32/f64 until assembler supports STF.S properly
     Register SrcReg = MI.getOperand(0).getReg();
     Register BaseReg = MI.getOperand(1).getReg();
     int64_t Offset = 0;
@@ -1189,10 +1189,9 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       Offset = MI.getOperand(2).getImm();
     }
     
-    // TODO: Use STF_S_ind for f32 when assembler properly supports STF.S
-    // bool IsSingle = (MI.getOpcode() == M65832::STF32);
-    // unsigned StoreOpc = IsSingle ? M65832::STF_S_ind : M65832::STF_ind;
-    unsigned StoreOpc = M65832::STF_ind;
+    // Use STF.S for f32 (32-bit), STF for f64 (64-bit)
+    bool IsSingle = (MI.getOpcode() == M65832::STF32);
+    unsigned StoreOpc = IsSingle ? M65832::STF_S_ind : M65832::STF_ind;
     
     // Check if BaseReg is in R0-R15 range (required for LDF/STF indirect)
     bool BaseIsLowReg = (BaseReg >= M65832::R0 && BaseReg <= M65832::R15);
@@ -1203,12 +1202,16 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
           .addReg(SrcReg)
           .addReg(BaseReg);
     } else if (BaseReg == M65832::B) {
-      // B register: compute address into R0 and use indirect
-      // LDA B+Offset
-      // STA R0
-      // STF Fn, (R0)
-      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
-          .addImm(Offset);
+      // B register: compute effective address B+Offset into R0
+      // The frame base was saved to R30's DP slot during prologue (STA R30; SB R30)
+      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A)
+          .addImm(getDPOffset(30)); // R30 contains frame base
+      if (Offset != 0) {
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(Offset);
+      }
       BuildMI(MBB, MI, DL, get(M65832::STA_DP))
           .addReg(M65832::A, RegState::Kill)
           .addImm(getDPOffset(0)); // R0

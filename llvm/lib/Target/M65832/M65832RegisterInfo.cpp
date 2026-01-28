@@ -59,19 +59,18 @@ BitVector M65832RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Status register
   Reserved.set(M65832::SR);
   
-  // Kernel reserved registers
+  // Kernel reserved registers (R24-R29)
   Reserved.set(M65832::R24);
   Reserved.set(M65832::R25);
   Reserved.set(M65832::R26);
   Reserved.set(M65832::R27);
-  
-  // Global pointer
   Reserved.set(M65832::R28);
+  Reserved.set(M65832::R29);
   
   // Reserved R31
   Reserved.set(M65832::R31);
   
-  // Future reserved registers
+  // Future reserved registers (R56-R63)
   Reserved.set(M65832::R56);
   Reserved.set(M65832::R57);
   Reserved.set(M65832::R58);
@@ -80,12 +79,6 @@ BitVector M65832RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(M65832::R61);
   Reserved.set(M65832::R62);
   Reserved.set(M65832::R63);
-
-  // Frame pointer if used
-  const MachineFrameInfo &MFI = MF.getFrameInfo();
-  if (MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken()) {
-    Reserved.set(M65832::R29);
-  }
 
   return Reserved;
 }

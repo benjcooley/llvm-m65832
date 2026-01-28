@@ -21,7 +21,7 @@ PICOLIBC_BRANCH="main"  # We'll tag releases later
 PICOLIBC_SRC="$PROJECTS_DIR/picolibc-m65832"
 PICOLIBC_BUILD="$PROJECTS_DIR/picolibc-build-m65832"
 INSTALL_PREFIX="$PROJECTS_DIR/m65832-sysroot"
-LLVM_BUILD="$PROJECTS_DIR/llvm-m65832/build"
+LLVM_BUILD="$PROJECTS_DIR/llvm-m65832/build-fast"
 
 # Tools
 CLANG="$LLVM_BUILD/bin/clang"
@@ -68,13 +68,13 @@ CROSS_FILE="$STDLIB_DIR/picolibc/cross-m65832.txt"
 CLANG_WRAPPER="$STDLIB_DIR/picolibc/m65832-clang"
 
 echo ">>> Generating clang wrapper..."
-cat > "$CLANG_WRAPPER" << 'EOF'
+cat > "$CLANG_WRAPPER" << EOF
 #!/bin/bash
 # Wrapper for clang that adds M65832 target flags
-exec /Users/benjamincooley/projects/llvm-m65832/build/bin/clang \
-    -target m65832-elf \
-    -ffreestanding \
-    "$@"
+exec $CLANG \\
+    -target m65832-elf \\
+    -ffreestanding \\
+    "\$@"
 EOF
 chmod +x "$CLANG_WRAPPER"
 
@@ -157,10 +157,9 @@ mkdir -p "$M65832_LIB" "$M65832_INC"
     -I"$M65832_INC" \
     -c "$STDLIB_DIR/picolibc/syscalls.c" -o "$M65832_LIB/syscalls.o"
 
-# Compile crt0 (using -O1, no -g due to debug info bug)
-"$CLANG" -target m65832-elf -ffreestanding -O1 \
-    -I"$M65832_INC" \
-    -c "$STDLIB_DIR/picolibc/crt0.c" -o "$M65832_LIB/crt0.o"
+# Assemble crt0 (using assembly to avoid compiler crash with crt0.c)
+"$CLANG" -target m65832-elf -ffreestanding \
+    -c "$STDLIB_DIR/picolibc/crt0.s" -o "$M65832_LIB/crt0.o"
 
 # Copy linker script
 cp "$STDLIB_DIR/picolibc/m65832.ld" "$M65832_LIB/"

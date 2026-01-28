@@ -8,9 +8,9 @@ BUILD_DIR="$STDLIB_DIR/build"
 TEST_BUILD="$BUILD_DIR/test"
 
 # Tools
-CLANG="/Users/benjamincooley/projects/llvm-m65832/build/bin/clang-23"
+CLANG="/Users/benjamincooley/projects/llvm-m65832/build-fast/bin/clang"
 LLD="/Users/benjamincooley/projects/llvm-m65832/build/bin/ld.lld"
-EMU="/Users/benjamincooley/projects/M65832/emu/m65832emu"
+EMU="/Users/benjamincooley/projects/m65832/emu/m65832emu"
 
 # Colors
 RED='\033[0;31m'
