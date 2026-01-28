@@ -97,6 +97,12 @@ bool M65832RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   Offset += MFI.getStackSize();
   Offset += SPAdj;
   
+  // B is set after frame allocation but BEFORE callee-saved register pushes.
+  // So we need to subtract the callee-saved area size from B-relative offsets.
+  // Each callee-saved GPR is 4 bytes (pushed via PHA).
+  unsigned CalleeSavedSize = MFI.getCalleeSavedInfo().size() * 4;
+  Offset -= CalleeSavedSize;
+  
   // Check if there's an additional offset operand after the frame index
   // This is the case for complex memory operands like memsrc
   unsigned NumOps = MI.getNumOperands();

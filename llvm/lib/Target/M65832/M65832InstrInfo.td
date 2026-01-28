@@ -148,9 +148,9 @@ def brtarget : Operand<OtherVT> {
   let ParserMatchClass = M65832MemAsmOperand;
 }
 
-// Call target (for JSR)
+// Call target (for JSR) - 32-bit absolute address in 32-bit mode
 def calltarget : Operand<i32> {
-  let PrintMethod = "printBankRelAddr";
+  let PrintMethod = "printAbsAddr";
   let EncoderMethod = "getCallTargetOpValue";
   let ParserMatchClass = M65832MemAsmOperand;
 }
@@ -1157,7 +1157,9 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
 //===----------------------------------------------------------------------===//
 
 let isCall = 1 in {
-  def JSR : F3<0x20, (outs), (ins calltarget:$target),
+  // JSR in 32-bit mode: opcode 0x20 + 32-bit absolute address (5 bytes total)
+  // The hardware adds B register to the address at runtime
+  def JSR : F8<0x20, (outs), (ins calltarget:$target),
               "JSR\t$target",
               [(M65832call tglobaladdr:$target)]> {
     // Caller-saved GPRs and FPU registers

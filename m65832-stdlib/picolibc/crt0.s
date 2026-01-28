@@ -24,6 +24,10 @@ _start:
     .byte 0xA9, 0x00, 0x40, 0x00, 0x00   ; LDA #$00004000
     .byte 0x5B                            ; TCD
     
+    ; Initialize B register to 0 for absolute JSR B+addr calls
+    ; SB #0 - Set B from immediate (6 bytes: $02 $22 + 32-bit value)
+    .byte 0x02, 0x22, 0x00, 0x00, 0x00, 0x00  ; SB #$00000000
+    
     ; Fall through to __crt_init
     
     .globl __crt_init  
@@ -120,13 +124,17 @@ __crt_init:
 
     ;
     ; Call C library initialization (constructors)
+    ; In 32-bit mode, JSR is 5 bytes: opcode 0x20 + 32-bit address
+    ; Address is added to B (which is 0) to get absolute target
     ;
-    jsr __libc_init_array
+    .byte 0x20                            ; JSR opcode
+    .long __libc_init_array               ; 32-bit absolute address
     
     ;
     ; Call main()
     ;
-    jsr main
+    .byte 0x20                            ; JSR opcode
+    .long main                            ; 32-bit absolute address
     
     ;
     ; Get return value from R0 (ABI: return value is in R0)
@@ -137,14 +145,16 @@ __crt_init:
     ;
     ; Call C library finalization (destructors)
     ;
-    jsr __libc_fini_array
+    .byte 0x20                            ; JSR opcode
+    .long __libc_fini_array               ; 32-bit absolute address
     
     ;
     ; Exit with return value
     ;
     pla                                   ; Restore return value
     .byte 0x85, 0x00                      ; STA dp $00 (put in R0 for _exit)
-    jsr _exit
+    .byte 0x20                            ; JSR opcode
+    .long _exit                           ; 32-bit absolute address
     
     ; Should never reach here
     stp

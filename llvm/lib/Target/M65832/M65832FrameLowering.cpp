@@ -183,11 +183,30 @@ M65832FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   // Calculate offset from frame register
   int64_t Offset = MFI.getObjectOffset(FI);
   
-  // Use B as frame base (points to SP after allocation)
+  // Use B as frame base
   FrameReg = M65832::B;
-  // SP points to the bottom of the stack frame.
-  // Need to add StackSize to convert from frame-relative to SP-relative.
+  
+  // B is set to SP after frame allocation but BEFORE callee-saved pushes.
+  // The callee-saved registers are pushed via PHA (4 bytes each) which
+  // decreases SP but leaves B unchanged. So we need to account for this.
+  //
+  // Frame layout (stack grows down):
+  //   High addr: [old B from PHB]
+  //              [locals - StackSize bytes]  <-- B points here
+  //              [callee-saved regs]         <-- pushed after B is set
+  //   Low addr:  SP after callee saves
+  //
+  // To address a local at SP+x, we need B+(x - CalleeSavedSize)
+  // But MFI.getObjectOffset already gives us negative offsets from frame base.
+  // We add StackSize to convert to positive SP-relative offsets.
+  // Then we need to subtract the callee-saved area size since B is above that.
+  
   Offset += MFI.getStackSize();
+  
+  // Subtract space for callee-saved registers (4 bytes per GPR)
+  // The callee-saved info is stored in MFI
+  unsigned CalleeSavedSize = MFI.getCalleeSavedInfo().size() * 4;
+  Offset -= CalleeSavedSize;
   
   return StackOffset::getFixed(Offset);
 }

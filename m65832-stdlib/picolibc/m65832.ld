@@ -1,24 +1,31 @@
 /* m65832.ld - Linker script for M65832 baremetal with picolibc */
+/* Memory layout for 1MB address space */
+/*
+ * All code and data use full 32-bit addressing.
+ * JSR/RTS use 32-bit absolute addresses in 32-bit mode.
+ * JSL/RTL are reserved (illegal) in 32-bit mode.
+ */
 
-OUTPUT_FORMAT("elf32-m65832")
-OUTPUT_ARCH(m65832)
+/* Note: OUTPUT_FORMAT/OUTPUT_ARCH not needed - lld infers from input files */
 ENTRY(_start)
 
-/* Memory layout for baremetal M65832 */
+/* Memory layout for baremetal M65832 (1MB) */
 MEMORY
 {
-    /* ROM/Flash for code - starts at 0x1000 (after zero page and stack) */
-    ROM (rx)  : ORIGIN = 0x1000, LENGTH = 48K
+    /* ROM/Flash for code - starts at 128K to ensure 32-bit addressing */
+    ROM (rx)  : ORIGIN = 0x00020000, LENGTH = 384K
     
-    /* RAM for data - starts after ROM */
-    RAM (rwx) : ORIGIN = 0xC000, LENGTH = 12K
+    /* RAM for data - at 512K */
+    RAM (rwx) : ORIGIN = 0x00080000, LENGTH = 512K
     
-    /* Direct page (zero page) - first 256 bytes for fast access */
-    DP  (rw)  : ORIGIN = 0x0000, LENGTH = 256
+    /* Direct page area - GPRs are mapped at D+0x00 through D+0xFF
+     * D register is set to 0x4000 in crt0, so this is 0x4000-0x40FF
+     * We don't allocate anything here - it's for register access */
+    DP  (rw)  : ORIGIN = 0x00004000, LENGTH = 256
 }
 
-/* Stack grows down from 0xFFFF */
-_stack_top = 0xFFFF;
+/* Stack grows down from top of 1MB - MUST be 4-byte aligned for ABI */
+_stack_top = 0x000FFFFC;
 
 SECTIONS
 {
@@ -123,14 +130,15 @@ SECTIONS
         _bss_end = .;
     } > RAM
 
-    /* Heap - everything after BSS until end of RAM */
+    /* Heap - everything after BSS until near top of RAM (leave room for stack) */
     .heap (NOLOAD) :
     {
         . = ALIGN(4);
         _end = .;
         end = .;
         _heap_start = .;
-        . = ORIGIN(RAM) + LENGTH(RAM) - 256;
+        /* Leave 64KB for stack at top of RAM */
+        . = ORIGIN(RAM) + LENGTH(RAM) - 64K;
         _heap_end = .;
     } > RAM
 
