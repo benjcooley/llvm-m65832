@@ -12,6 +12,9 @@ CLANG="/Users/benjamincooley/projects/llvm-m65832/build-fast/bin/clang"
 LLD="/Users/benjamincooley/projects/llvm-m65832/build/bin/ld.lld"
 EMU="/Users/benjamincooley/projects/m65832/emu/m65832emu"
 
+# Use picolibc sysroot for 32-bit mode support
+SYSROOT="/Users/benjamincooley/projects/m65832-sysroot"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,24 +41,21 @@ compile_test() {
     local test_obj="$TEST_BUILD/${test_name}.o"
     local test_elf="$TEST_BUILD/${test_name}.elf"
     
-    # Compile
-    "$CLANG" -target m65832 -O2 -ffreestanding -nostdlib \
-        -I"$STDLIB_DIR/libc/include" \
-        -I"/Users/benjamincooley/projects/M65832/emu/platform" \
+    # Compile using picolibc sysroot (32-bit mode)
+    "$CLANG" -target m65832-elf -O2 -ffreestanding \
+        -I"$SYSROOT/include" \
         -c "$test_src" -o "$test_obj" 2>&1
     
     if [ $? -ne 0 ]; then
         return 1
     fi
     
-    # Link
-    "$LLD" -T "$STDLIB_DIR/scripts/baremetal/m65832.ld" \
+    # Link using picolibc sysroot (32-bit mode with 1MB memory layout)
+    "$LLD" -T "$SYSROOT/lib/m65832.ld" \
         -o "$test_elf" \
-        "$BUILD_DIR/crt0.o" \
-        "$BUILD_DIR/init.o" \
+        "$SYSROOT/lib/crt0.o" \
         "$test_obj" \
-        "$BUILD_DIR/libc.a" \
-        "$BUILD_DIR/libplatform.a" 2>&1
+        -L"$SYSROOT/lib" -lc -lsys 2>&1
     
     if [ $? -ne 0 ]; then
         return 1
@@ -84,9 +84,11 @@ run_test() {
         return 1
     fi
     
-    # Run on emulator
+    # Run on emulator with cycle limit and silent mode
+    # -c 100000 limits execution to 100K cycles (more than enough for tests)
+    # -s enables silent mode (no trace output)
     local output
-    output=$("$EMU" "$elf_file" 2>&1)
+    output=$("$EMU" -c 100000 -s "$elf_file" 2>&1)
     local exit_code=$?
     
     # Check result
