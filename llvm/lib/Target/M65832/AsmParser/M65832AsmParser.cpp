@@ -64,7 +64,7 @@ private:
     bool Indirect;
     bool IndirectLong;
     bool StackRelative;
-    bool BankRelative;  // B+addr syntax
+    bool BRelative;  // B+offset syntax (B is frame pointer)
   };
 
   union {
@@ -104,7 +104,7 @@ public:
   // Memory operand
   static std::unique_ptr<M65832Operand>
   createMem(unsigned Base, const MCExpr *Disp, unsigned Index, bool Indirect,
-            bool IndirectLong, bool StackRel, bool BankRel, SMLoc S, SMLoc E) {
+            bool IndirectLong, bool StackRel, bool BRel, SMLoc S, SMLoc E) {
     auto Op = std::make_unique<M65832Operand>(k_Memory, S, E);
     Op->Mem.BaseReg = Base;
     Op->Mem.Disp = Disp;
@@ -112,7 +112,7 @@ public:
     Op->Mem.Indirect = Indirect;
     Op->Mem.IndirectLong = IndirectLong;
     Op->Mem.StackRelative = StackRel;
-    Op->Mem.BankRelative = BankRel;
+    Op->Mem.BRelative = BRel;
     return Op;
   }
 
@@ -416,7 +416,7 @@ bool M65832AsmParser::parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc) {
     return false;
   }
   
-  // Handle B+symbol for bank-relative addressing
+  // Handle B+symbol for B-relative addressing (B is frame pointer)
   if (Tok.is(AsmToken::Identifier) && 
       Tok.getString().equals_insensitive("B")) {
     getParser().Lex(); // Eat 'B'
@@ -459,12 +459,12 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   bool Indirect = false;
   bool IndirectLong = false;
   bool StackRelative = false;
-  bool BankRelative = false;
+  bool BRelative = false;
 
-  // Check for B+addr (bank-relative)
+  // Check for B+offset (B-relative, B is frame pointer)
   if (getParser().getTok().is(AsmToken::Identifier) &&
       getParser().getTok().getString().equals_insensitive("B")) {
-    BankRelative = true;
+    BRelative = true;
     getParser().Lex(); // Eat 'B'
     if (getParser().getTok().is(AsmToken::Plus)) {
       getParser().Lex(); // Eat '+'
@@ -557,7 +557,7 @@ close_bracket:
   E = getParser().getTok().getLoc();
   Operands.push_back(M65832Operand::createMem(BaseReg, Disp, IndexReg, Indirect,
                                                IndirectLong, StackRelative, 
-                                               BankRelative, S, E));
+                                               BRelative, S, E));
   return ParseStatus::Success;
 }
 
@@ -570,7 +570,7 @@ ParseStatus M65832AsmParser::parseOperand(OperandVector &Operands,
   // Try register
   if (getParser().getTok().is(AsmToken::Identifier)) {
     StringRef TokStr = getParser().getTok().getString();
-    // Check if it's a register (but not 'B' which starts bank-relative)
+    // Check if it's a register (but not 'B' which starts B-relative)
     if (!TokStr.equals_insensitive("B")) {
       unsigned RegNo = parseRegisterName(TokStr);
       if (RegNo != 0) {

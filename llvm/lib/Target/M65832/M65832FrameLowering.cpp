@@ -186,27 +186,17 @@ M65832FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   // Use B as frame base
   FrameReg = M65832::B;
   
-  // B is set to SP after frame allocation but BEFORE callee-saved pushes.
-  // The callee-saved registers are pushed via PHA (4 bytes each) which
-  // decreases SP but leaves B unchanged. So we need to account for this.
+  // B is set to SP after local allocation (bottom of locals).
+  // The callee-saved registers are pushed after B is set, below the locals.
   //
   // Frame layout (stack grows down):
   //   High addr: [old B from PHB]
   //              [locals - StackSize bytes]  <-- B points here
-  //              [callee-saved regs]         <-- pushed after B is set
-  //   Low addr:  SP after callee saves
+  //   Low addr:  [callee-saved regs]         <-- pushed after B is set
   //
-  // To address a local at SP+x, we need B+(x - CalleeSavedSize)
-  // But MFI.getObjectOffset already gives us negative offsets from frame base.
-  // We add StackSize to convert to positive SP-relative offsets.
-  // Then we need to subtract the callee-saved area size since B is above that.
-  
+  // MFI.getObjectOffset gives negative offsets within the local area.
+  // Convert to a positive offset from B.
   Offset += MFI.getStackSize();
-  
-  // Subtract space for callee-saved registers (4 bytes per GPR)
-  // The callee-saved info is stored in MFI
-  unsigned CalleeSavedSize = MFI.getCalleeSavedInfo().size() * 4;
-  Offset -= CalleeSavedSize;
   
   return StackOffset::getFixed(Offset);
 }
@@ -217,7 +207,6 @@ bool M65832FrameLowering::spillCalleeSavedRegisters(
   if (CSI.empty())
     return true;
 
-  MachineFunction &MF = *MBB.getParent();
   const M65832InstrInfo &TII =
       *static_cast<const M65832InstrInfo *>(Subtarget.getInstrInfo());
   DebugLoc DL;
@@ -249,7 +238,6 @@ bool M65832FrameLowering::restoreCalleeSavedRegisters(
   if (CSI.empty())
     return true;
 
-  MachineFunction &MF = *MBB.getParent();
   const M65832InstrInfo &TII =
       *static_cast<const M65832InstrInfo *>(Subtarget.getInstrInfo());
   DebugLoc DL;

@@ -167,9 +167,10 @@ def MemOp : Operand<i32> {
   let ParserMatchClass = M65832MemAsmOperand;
 }
 
-// Bank-relative absolute address (B+$xxxx)
-def BankRelOp : Operand<i32> {
-  let PrintMethod = "printBankRelAddr";
+// B-relative address (B+offset where B is frame pointer)
+// Note: M65832 32-bit mode has no banking. B is simply the frame pointer.
+def BRelOp : Operand<i32> {
+  let PrintMethod = "printBRelAddr";
   let ParserMatchClass = M65832MemAsmOperand;
 }
 
@@ -526,6 +527,74 @@ def LDR_IMM : FE8_IMM<0x80, (outs GPR:$dst), (ins i32imm:$imm),
                       [(set GPR:$dst, imm:$imm)]>;
 
 //===----------------------------------------------------------------------===//
+// Extended ALU - Byte (8-bit) Operations
+// Used for char, uint8_t, int8_t loads and stores
+// These use the Extended ALU encoding with size=00 (BYTE) in mode byte
+//===----------------------------------------------------------------------===//
+
+// LD.B - Load byte to register (zero extended)
+def LDB_DP : FE8_DP_B<0x80, (outs GPR:$dst), (ins GPR:$src),
+                      "LD.B\t$dst,$src",
+                      []>;
+
+def LDB_ABS : FE8_ABS_B<0x80, (outs GPR:$dst), (ins i32imm:$addr),
+                        "LD.B\t$dst,$addr",
+                        []>;
+
+// Indirect Y mode: use alternate syntax with @ prefix for pseudo-indirect
+def LDB_IND_Y : FE8_IND_Y_B<0x80, (outs GPR:$dst), (ins GPR:$base),
+                            "LD.B\t$dst, @$base, Y",
+                            []>;
+
+// ST.B - Store byte from register (truncating)
+def STB_DP : FE8_DP_B<0x81, (outs), (ins GPR:$src, GPR:$dst),
+                      "ST.B\t$dst,$src",
+                      []>;
+
+def STB_ABS : FE8_ABS_B<0x81, (outs), (ins GPR:$src, i32imm:$addr),
+                        "ST.B\t$addr,$src",
+                        []>;
+
+// Indirect Y store: use alternate syntax
+def STB_IND_Y : FE8_IND_Y_B<0x81, (outs), (ins GPR:$src, GPR:$base),
+                            "ST.B\t@$base, Y, $src",
+                            []>;
+
+//===----------------------------------------------------------------------===//
+// Extended ALU - Word (16-bit) Operations
+// Used for short, uint16_t, int16_t loads and stores
+// These use the Extended ALU encoding with size=01 (WORD) in mode byte
+//===----------------------------------------------------------------------===//
+
+// LD.W - Load word to register (zero extended)
+def LDW_DP : FE8_DP_W<0x80, (outs GPR:$dst), (ins GPR:$src),
+                      "LD.W\t$dst,$src",
+                      []>;
+
+def LDW_ABS : FE8_ABS_W<0x80, (outs GPR:$dst), (ins i32imm:$addr),
+                        "LD.W\t$dst,$addr",
+                        []>;
+
+// Indirect Y mode: use alternate syntax
+def LDW_IND_Y : FE8_IND_Y_W<0x80, (outs GPR:$dst), (ins GPR:$base),
+                            "LD.W\t$dst, @$base, Y",
+                            []>;
+
+// ST.W - Store word from register (truncating)
+def STW_DP : FE8_DP_W<0x81, (outs), (ins GPR:$src, GPR:$dst),
+                      "ST.W\t$dst,$src",
+                      []>;
+
+def STW_ABS : FE8_ABS_W<0x81, (outs), (ins GPR:$src, i32imm:$addr),
+                        "ST.W\t$addr,$src",
+                        []>;
+
+// Indirect Y store: use alternate syntax
+def STW_IND_Y : FE8_IND_Y_W<0x81, (outs), (ins GPR:$src, GPR:$base),
+                            "ST.W\t@$base, Y, $src",
+                            []>;
+
+//===----------------------------------------------------------------------===//
 // Barrel Shifter Instructions ($02 $98)
 // Single-cycle shifts with constant or variable amount
 //===----------------------------------------------------------------------===//
@@ -731,12 +800,12 @@ def LDA_IMM : F8<0xA9, (outs ACC:$dst), (ins i32imm:$imm),
                 []>;
 
 // LDA absolute (B+$xxxx)
-def LDA_ABS : F9<0xAD, (outs ACC:$dst), (ins BankRelOp:$addr),
+def LDA_ABS : F9<0xAD, (outs ACC:$dst), (ins BRelOp:$addr),
                 "LDA\t$addr",
                 []>;
 
 // LDA absolute indexed by X
-def LDA_ABS_X : F9<0xBD, (outs ACC:$dst), (ins BankRelOp:$addr),
+def LDA_ABS_X : F9<0xBD, (outs ACC:$dst), (ins BRelOp:$addr),
                   "LDA\t$addr,X",
                   []>;
 
@@ -781,12 +850,12 @@ def STA_DP : F1<0x85, (outs), (ins ACC:$src, DPOp:$dst),
                []>;
 
 // STA absolute (B+$xxxx)
-def STA_ABS : F9<0x8D, (outs), (ins ACC:$src, BankRelOp:$addr),
+def STA_ABS : F9<0x8D, (outs), (ins ACC:$src, BRelOp:$addr),
                 "STA\t$addr",
                 []>;
 
 // STA absolute indexed by X
-def STA_ABS_X : F9<0x9D, (outs), (ins ACC:$src, BankRelOp:$addr),
+def STA_ABS_X : F9<0x9D, (outs), (ins ACC:$src, BRelOp:$addr),
                   "STA\t$addr,X",
                   []>;
 
@@ -817,7 +886,7 @@ def STZ_DP : F1<0x64, (outs), (ins DPOp:$dst),
                "STZ\t$dst",
                []>;
 
-def STZ_ABS : F9<0x9C, (outs), (ins BankRelOp:$addr),
+def STZ_ABS : F9<0x9C, (outs), (ins BRelOp:$addr),
                 "STZ\t$addr",
                 []>;
 
@@ -1191,7 +1260,7 @@ def BRL : F6<0x82, (outs), (ins brtarget:$target), "BRL\t$target", []>;
 //===----------------------------------------------------------------------===//
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
-  def JMP : F3<0x4C, (outs), (ins BankRelOp:$target), "JMP\t$target", []>;
+  def JMP : F3<0x4C, (outs), (ins BRelOp:$target), "JMP\t$target", []>;
 }
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {

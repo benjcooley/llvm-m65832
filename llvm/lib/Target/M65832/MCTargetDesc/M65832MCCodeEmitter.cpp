@@ -11,7 +11,7 @@
 // M65832 instruction encoding:
 // - Implied (1 byte): opcode
 // - Direct Page (2 bytes): opcode + dp_addr
-// - Bank-relative 16 (3 bytes): opcode + addr_lo + addr_hi (B+$xxxx)
+// - B-relative 16 (3 bytes): opcode + offset_lo + offset_hi (B+offset, B is frame pointer)
 // - Relative 16 (3 bytes): opcode + offset_lo + offset_hi (branches in 32-bit mode)
 // - Imm32 (5 bytes): opcode + imm[0:31] (32-bit mode)
 //
@@ -259,6 +259,22 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::CMPR_DP:   return 0x87;
   case M65832::CMPR_IMM:  return 0x87;
   
+  // Extended ALU - byte operations (LD.B/ST.B)
+  case M65832::LDB_DP:    return 0x80;
+  case M65832::LDB_ABS:   return 0x80;
+  case M65832::LDB_IND_Y: return 0x80;
+  case M65832::STB_DP:    return 0x81;
+  case M65832::STB_ABS:   return 0x81;
+  case M65832::STB_IND_Y: return 0x81;
+  
+  // Extended ALU - word operations (LD.W/ST.W)
+  case M65832::LDW_DP:    return 0x80;
+  case M65832::LDW_ABS:   return 0x80;
+  case M65832::LDW_IND_Y: return 0x80;
+  case M65832::STW_DP:    return 0x81;
+  case M65832::STW_ABS:   return 0x81;
+  case M65832::STW_IND_Y: return 0x81;
+  
   // Barrel shifter - opcode encodes op|cnt
   case M65832::SHLR:      return 0x00;
   case M65832::SHRR:      return 0x20;
@@ -292,13 +308,27 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   unsigned MIOp = MI.getOpcode();
   uint8_t Opcode = getOpcode(MI.getOpcode());
 
+  // Helper to evaluate constant expressions from inline assembly
+  auto tryEvaluateConstant = [&](const MCExpr *Expr, int64_t &Value) -> bool {
+    if (const auto *CE = dyn_cast<MCConstantExpr>(Expr)) {
+      Value = CE->getValue();
+      return true;
+    }
+    return Expr->evaluateAsAbsolute(Value);
+  };
+
   auto emitImm8 = [&](const MCOperand &MO, unsigned Offset) {
     if (MO.isImm()) {
       emitByte(static_cast<uint8_t>(MO.getImm()), CB);
     } else if (MO.isExpr()) {
-      Fixups.push_back(
-          MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_1)));
-      emitByte(0, CB);
+      int64_t Value;
+      if (tryEvaluateConstant(MO.getExpr(), Value)) {
+        emitByte(static_cast<uint8_t>(Value), CB);
+      } else {
+        Fixups.push_back(
+            MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_1)));
+        emitByte(0, CB);
+      }
     } else {
       emitByte(0, CB);
     }
@@ -316,25 +346,31 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
       }
       emitLE16(static_cast<uint16_t>(Imm), CB);
     } else if (MO.isExpr()) {
-      // Use target-specific PC-relative fixup kind for branches
-      // Note: Setting PCRel=true causes crashes in MCAssembler layout,
-      // so we use a custom fixup kind to identify PC-relative fixups instead.
-      MCFixupKind Kind = IsPCRel ? MCFixupKind(M65832::fixup_m65832_pcrel_16) 
-                                 : MCFixupKind(FK_Data_2);
-      const MCExpr *Expr = MO.getExpr();
-      
-      // For PC-relative branches, the M65832 calculates target from the 
-      // instruction END (opcode + 3), but the relocation is at opcode + 1.
-      // LLD computes: val = target - reloc_addr
-      // We need: offset = target - (reloc_addr + 2)
-      // So add -2 to the expression.
-      if (IsPCRel) {
-        Expr = MCBinaryExpr::createAdd(
-            Expr, MCConstantExpr::create(-2, Ctx), Ctx);
+      // Try to evaluate constant expressions (from inline assembly)
+      int64_t Value;
+      if (!IsPCRel && tryEvaluateConstant(MO.getExpr(), Value)) {
+        emitLE16(static_cast<uint16_t>(Value), CB);
+      } else {
+        // Use target-specific PC-relative fixup kind for branches
+        // Note: Setting PCRel=true causes crashes in MCAssembler layout,
+        // so we use a custom fixup kind to identify PC-relative fixups instead.
+        MCFixupKind Kind = IsPCRel ? MCFixupKind(M65832::fixup_m65832_pcrel_16) 
+                                   : MCFixupKind(FK_Data_2);
+        const MCExpr *Expr = MO.getExpr();
+        
+        // For PC-relative branches, the M65832 calculates target from the 
+        // instruction END (opcode + 3), but the relocation is at opcode + 1.
+        // LLD computes: val = target - reloc_addr
+        // We need: offset = target - (reloc_addr + 2)
+        // So add -2 to the expression.
+        if (IsPCRel) {
+          Expr = MCBinaryExpr::createAdd(
+              Expr, MCConstantExpr::create(-2, Ctx), Ctx);
+        }
+        
+        Fixups.push_back(MCFixup::create(Offset, Expr, Kind, /*PCRel=*/false));
+        emitLE16(0, CB);
       }
-      
-      Fixups.push_back(MCFixup::create(Offset, Expr, Kind, /*PCRel=*/false));
-      emitLE16(0, CB);
     } else {
       emitLE16(0, CB);
     }
@@ -344,9 +380,15 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
     if (MO.isImm()) {
       emitLE32(static_cast<uint32_t>(MO.getImm()), CB);
     } else if (MO.isExpr()) {
-      Fixups.push_back(
-          MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_4)));
-      emitLE32(0, CB);
+      // Try to evaluate constant expressions (from inline assembly)
+      int64_t Value;
+      if (tryEvaluateConstant(MO.getExpr(), Value)) {
+        emitLE32(static_cast<uint32_t>(Value), CB);
+      } else {
+        Fixups.push_back(
+            MCFixup::create(Offset, MO.getExpr(), MCFixupKind(FK_Data_4)));
+        emitLE32(0, CB);
+      }
     } else {
       emitLE32(0, CB);
     }
@@ -453,6 +495,179 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
     return;
   }
 
+  // Extended ALU - BYTE (8-bit) operations
+  // Mode byte: [size:2=00][target:1=1][addr_mode:5]
+  // addr_mode: 0=dp, 4=(dp)Y, 8=abs
+  case M65832::LDB_DP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x20, CB); // size=byte(00), target=Rn(1), addr_mode=dp(0)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &SrcOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitDPOp(SrcOp, 4);
+    return;
+  }
+  case M65832::STB_DP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x20, CB); // size=byte(00), target=Rn(1), addr_mode=dp(0)
+    // For ST: dest_dp = value register, src_operand = dest address register
+    // Operand 0 = src (value to store), Operand 1 = dst (address)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);  // value reg (dest_dp)
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);  // dest address
+    else
+      emitByte(0, CB);
+    return;
+  }
+  case M65832::LDB_ABS: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x28, CB); // size=byte(00), target=Rn(1), addr_mode=abs(8)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &AddrOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm16(AddrOp, 4);
+    return;
+  }
+  case M65832::STB_ABS: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x28, CB); // size=byte(00), target=Rn(1), addr_mode=abs(8)
+    // For stores: emit dest address register, then src register address
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &AddrOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm16(AddrOp, 4);
+    return;
+  }
+  case M65832::LDB_IND_Y: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x24, CB); // size=byte(00), target=Rn(1), addr_mode=(dp)Y(4)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);
+    else
+      emitByte(0, CB);
+    return;
+  }
+  case M65832::STB_IND_Y: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x24, CB); // size=byte(00), target=Rn(1), addr_mode=(dp)Y(4)
+    // For ST: dest_dp = value register, src_operand = address register
+    // Operand 0 = src (value to store), Operand 1 = base (address)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);  // value reg (dest_dp)
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);  // address reg (src)
+    else
+      emitByte(0, CB);
+    return;
+  }
+
+  // Extended ALU - WORD (16-bit) operations
+  // Mode byte: [size:2=01][target:1=1][addr_mode:5]
+  case M65832::LDW_DP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x60, CB); // size=word(01), target=Rn(1), addr_mode=dp(0)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &SrcOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitDPOp(SrcOp, 4);
+    return;
+  }
+  case M65832::STW_DP: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x60, CB); // size=word(01), target=Rn(1), addr_mode=dp(0)
+    // For ST: dest_dp = value register, src_operand = dest address register
+    // Operand 0 = src (value to store), Operand 1 = dst (address)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);  // value reg (dest_dp)
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);  // dest address
+    else
+      emitByte(0, CB);
+    return;
+  }
+  case M65832::LDW_ABS: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x68, CB); // size=word(01), target=Rn(1), addr_mode=abs(8)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &AddrOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm16(AddrOp, 4);
+    return;
+  }
+  case M65832::STW_ABS: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x68, CB); // size=word(01), target=Rn(1), addr_mode=abs(8)
+    // For stores: emit src register, then address
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    const MCOperand &AddrOp = MI.getOperand(MI.getNumOperands() - 1);
+    emitImm16(AddrOp, 4);
+    return;
+  }
+  case M65832::LDW_IND_Y: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x64, CB); // size=word(01), target=Rn(1), addr_mode=(dp)Y(4)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);
+    else
+      emitByte(0, CB);
+    return;
+  }
+  case M65832::STW_IND_Y: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(Opcode, CB);
+    emitByte(0x64, CB); // size=word(01), target=Rn(1), addr_mode=(dp)Y(4)
+    // For ST: dest_dp = value register, src_operand = address register
+    // Operand 0 = src (value to store), Operand 1 = base (address)
+    if (MI.getNumOperands() >= 1 && MI.getOperand(0).isReg())
+      emitByte(regToDP(MI.getOperand(0).getReg()), CB);  // value reg (dest_dp)
+    else
+      emitByte(0, CB);
+    if (MI.getNumOperands() >= 2 && MI.getOperand(1).isReg())
+      emitByte(regToDP(MI.getOperand(1).getReg()), CB);  // address reg (src)
+    else
+      emitByte(0, CB);
+    return;
+  }
+
   // Barrel shifter ($02 $98 op|cnt dest src)
   case M65832::SHLR:
   case M65832::SHRR:
@@ -500,6 +715,218 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
       emitByte(0, CB);
     return;
   }
+
+  // FPU register-indirect load/store ($02 $B4/$B5 $nm)
+  // LDF Fn, (Rm) / STF Fn, (Rm)
+  // Encoding: $02 $B4 $nm for load, $02 $B5 $nm for store
+  // n = FPU reg (0-15), m = GPR reg number / 4
+  case M65832::LDF_ind: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xB4, CB);  // LDF indirect opcode
+    // Get FPU register (F0-F15) -> n
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned n = FReg - M65832::F0;
+    // Get GPR register (R0-R63) -> m = DP offset / 4
+    unsigned GReg = MI.getOperand(1).getReg();
+    unsigned m = regToDP(GReg) / 4;
+    emitByte((n << 4) | m, CB);
+    return;
+  }
+  case M65832::STF_ind: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xB5, CB);  // STF indirect opcode
+    // Get FPU register (F0-F15) -> n
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned n = FReg - M65832::F0;
+    // Get GPR register (R0-R63) -> m = DP offset / 4
+    unsigned GReg = MI.getOperand(1).getReg();
+    unsigned m = regToDP(GReg) / 4;
+    emitByte((n << 4) | m, CB);
+    return;
+  }
+  case M65832::LDF_S_ind: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xBA, CB);  // LDF.S indirect opcode
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned n = FReg - M65832::F0;
+    unsigned GReg = MI.getOperand(1).getReg();
+    unsigned m = regToDP(GReg) / 4;
+    emitByte((n << 4) | m, CB);
+    return;
+  }
+  case M65832::STF_S_ind: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xBB, CB);  // STF.S indirect opcode
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned n = FReg - M65832::F0;
+    unsigned GReg = MI.getOperand(1).getReg();
+    unsigned m = regToDP(GReg) / 4;
+    emitByte((n << 4) | m, CB);
+    return;
+  }
+
+  // FPU binary arithmetic ($02 opcode $nm) - single precision
+  case M65832::FADD_S:
+  case M65832::FSUB_S:
+  case M65832::FMUL_S:
+  case M65832::FDIV_S: {
+    emitByte(EXT_PREFIX, CB);
+    unsigned opcodeVal = 0xC0;
+    switch (MIOp) {
+    case M65832::FADD_S: opcodeVal = 0xC0; break;
+    case M65832::FSUB_S: opcodeVal = 0xC1; break;
+    case M65832::FMUL_S: opcodeVal = 0xC2; break;
+    case M65832::FDIV_S: opcodeVal = 0xC3; break;
+    }
+    emitByte(opcodeVal, CB);
+    unsigned DstFReg = MI.getOperand(0).getReg();
+    unsigned SrcFReg = MI.getOperand(2).getReg();  // Operand 1 is $Fd tied to $dst
+    unsigned d = DstFReg - M65832::F0;
+    unsigned s = SrcFReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+
+  // FPU binary arithmetic ($02 opcode $nm) - double precision
+  case M65832::FADD_D:
+  case M65832::FSUB_D:
+  case M65832::FMUL_D:
+  case M65832::FDIV_D: {
+    emitByte(EXT_PREFIX, CB);
+    unsigned opcodeVal = 0xD0;
+    switch (MIOp) {
+    case M65832::FADD_D: opcodeVal = 0xD0; break;
+    case M65832::FSUB_D: opcodeVal = 0xD1; break;
+    case M65832::FMUL_D: opcodeVal = 0xD2; break;
+    case M65832::FDIV_D: opcodeVal = 0xD3; break;
+    }
+    emitByte(opcodeVal, CB);
+    unsigned DstFReg = MI.getOperand(0).getReg();
+    unsigned SrcFReg = MI.getOperand(2).getReg();  // Operand 1 is $Fd tied to $dst
+    unsigned d = DstFReg - M65832::F0;
+    unsigned s = SrcFReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+
+  // FPU unary ops ($02 opcode $nm) - single precision
+  case M65832::FNEG_S:
+  case M65832::FABS_S:
+  case M65832::FSQRT_S: {
+    emitByte(EXT_PREFIX, CB);
+    unsigned opcodeVal = 0xC4;
+    switch (MIOp) {
+    case M65832::FNEG_S: opcodeVal = 0xC4; break;
+    case M65832::FABS_S: opcodeVal = 0xC5; break;
+    case M65832::FSQRT_S: opcodeVal = 0xCA; break;
+    }
+    emitByte(opcodeVal, CB);
+    unsigned DstFReg = MI.getOperand(0).getReg();
+    unsigned SrcFReg = MI.getOperand(1).getReg();
+    unsigned d = DstFReg - M65832::F0;
+    unsigned s = SrcFReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+
+  // FPU unary ops ($02 opcode $nm) - double precision
+  case M65832::FNEG_D:
+  case M65832::FABS_D:
+  case M65832::FSQRT_D: {
+    emitByte(EXT_PREFIX, CB);
+    unsigned opcodeVal = 0xD4;
+    switch (MIOp) {
+    case M65832::FNEG_D: opcodeVal = 0xD4; break;
+    case M65832::FABS_D: opcodeVal = 0xD5; break;
+    case M65832::FSQRT_D: opcodeVal = 0xDA; break;
+    }
+    emitByte(opcodeVal, CB);
+    unsigned DstFReg = MI.getOperand(0).getReg();
+    unsigned SrcFReg = MI.getOperand(1).getReg();
+    unsigned d = DstFReg - M65832::F0;
+    unsigned s = SrcFReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+
+  // FPU compare ($02 opcode $nm)
+  case M65832::FCMP_S: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xC6, CB);
+    unsigned FdReg = MI.getOperand(0).getReg();
+    unsigned FsReg = MI.getOperand(1).getReg();
+    unsigned d = FdReg - M65832::F0;
+    unsigned s = FsReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+  case M65832::FCMP_D: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xD6, CB);
+    unsigned FdReg = MI.getOperand(0).getReg();
+    unsigned FsReg = MI.getOperand(1).getReg();
+    unsigned d = FdReg - M65832::F0;
+    unsigned s = FsReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+
+  // FPU move ($02 opcode $nm)
+  case M65832::FMOV_S: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xC9, CB);
+    unsigned DstFReg = MI.getOperand(0).getReg();
+    unsigned SrcFReg = MI.getOperand(1).getReg();
+    unsigned d = DstFReg - M65832::F0;
+    unsigned s = SrcFReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+  case M65832::FMOV_D: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xD9, CB);
+    unsigned DstFReg = MI.getOperand(0).getReg();
+    unsigned SrcFReg = MI.getOperand(1).getReg();
+    unsigned d = DstFReg - M65832::F0;
+    unsigned s = SrcFReg - M65832::F0;
+    emitByte((d << 4) | s, CB);
+    return;
+  }
+
+  // FPU real F2I/I2F instructions
+  case M65832::F2I_S_real: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xC7, CB);  // F2I.S opcode
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned f = FReg - M65832::F0;
+    emitByte((f << 4) | f, CB);  // reg-byte (same src/dst for F2I)
+    return;
+  }
+  case M65832::F2I_D_real: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xD7, CB);  // F2I.D opcode
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned f = FReg - M65832::F0;
+    emitByte((f << 4) | f, CB);
+    return;
+  }
+  case M65832::I2F_S_real: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xC8, CB);  // I2F.S opcode
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned f = FReg - M65832::F0;
+    emitByte((f << 4) | f, CB);
+    return;
+  }
+  case M65832::I2F_D_real: {
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xD8, CB);  // I2F.D opcode
+    unsigned FReg = MI.getOperand(0).getReg();
+    unsigned f = FReg - M65832::F0;
+    emitByte((f << 4) | f, CB);
+    return;
+  }
+
   default:
     break;
   }
@@ -514,7 +941,8 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
     emitByte(Opcode, CB);
     if (MI.getNumOperands() > 0) {
       const MCOperand &MO = MI.getOperand(MI.getNumOperands() - 1);
-      emitImm8(MO, 1);
+      // Use emitDPOp to handle both register operands (R0-R63) and immediates
+      emitDPOp(MO, 1);
     } else {
       emitByte(0, CB);
     }

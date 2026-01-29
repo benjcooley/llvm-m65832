@@ -97,11 +97,11 @@ void M65832InstPrinter::printAbsAddr(const MCInst *MI, unsigned OpNo,
   }
 }
 
-void M65832InstPrinter::printBankRelAddr(const MCInst *MI, unsigned OpNo,
-                                           raw_ostream &O) {
+void M65832InstPrinter::printBRelAddr(const MCInst *MI, unsigned OpNo,
+                                        raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isImm()) {
-    // Bank-relative address - print as B+$XXXX
+    // B-relative address - print as B+$XXXX (B is frame pointer)
     O << "B+$" << format_hex_no_prefix(Op.getImm() & 0xFFFF, 4);
   } else if (Op.isExpr()) {
     O << "B+";

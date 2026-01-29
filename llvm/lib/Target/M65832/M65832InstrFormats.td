@@ -146,6 +146,10 @@ class F9<bits<8> opcode, dag outs, dag ins, string asmstr, list<dag> pattern>
 
 // FE8: Extended ALU ($02 $80-$97 [mode] [dest] [src...])
 // Size varies: 4-8 bytes depending on addressing mode
+// Mode byte: [size:2][target:1][addr_mode:5]
+// Size: 00=BYTE, 01=WORD, 10=LONG
+
+// LONG (32-bit) variants - default
 class FE8_DP<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
   let Size = 5;  // $02 $op mode dest src_dp
@@ -155,6 +159,44 @@ class FE8_DP<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern
 class FE8_IMM<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {
   let Size = 8;  // $02 $op mode dest imm32
+  let Opcode = opmode;
+}
+
+// BYTE (8-bit) variants for sized loads/stores
+class FE8_DP_B<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 5;  // $02 $op mode dest src_dp
+  let Opcode = opmode;
+}
+
+class FE8_ABS_B<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 6;  // $02 $op mode dest abs16
+  let Opcode = opmode;
+}
+
+class FE8_IND_Y_B<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 5;  // $02 $op mode dest base_dp (Y register is implicit)
+  let Opcode = opmode;
+}
+
+// WORD (16-bit) variants for sized loads/stores
+class FE8_DP_W<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 5;  // $02 $op mode dest src_dp
+  let Opcode = opmode;
+}
+
+class FE8_ABS_W<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 6;  // $02 $op mode dest abs16
+  let Opcode = opmode;
+}
+
+class FE8_IND_Y_W<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 5;  // $02 $op mode dest base_dp (Y register is implicit)
   let Opcode = opmode;
 }
 

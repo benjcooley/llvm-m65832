@@ -93,15 +93,10 @@ bool M65832RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
   int64_t Offset = MFI.getObjectOffset(FrameIndex);
   
-  // Add the stack size to get offset from SP
+  // B is set to the stack pointer after local allocation (bottom of locals).
+  // Convert from negative object offsets to B-relative positive offsets.
   Offset += MFI.getStackSize();
   Offset += SPAdj;
-  
-  // B is set after frame allocation but BEFORE callee-saved register pushes.
-  // So we need to subtract the callee-saved area size from B-relative offsets.
-  // Each callee-saved GPR is 4 bytes (pushed via PHA).
-  unsigned CalleeSavedSize = MFI.getCalleeSavedInfo().size() * 4;
-  Offset -= CalleeSavedSize;
   
   // Check if there's an additional offset operand after the frame index
   // This is the case for complex memory operands like memsrc
@@ -115,12 +110,25 @@ bool M65832RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     }
   }
 
-  // Get the frame register (SP or FP)
-  Register FrameReg = getFrameRegister(MF);
-
-  // Replace the frame index with the frame register
-  // The load/store pseudo expansion will handle the actual SP+offset computation
-  MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false);
+  // Check if this instruction uses B-relative addressing (BRelOp).
+  // These instructions expect an immediate offset operand, not a register.
+  // B is the frame pointer, set by prologue to point to frame base.
+  unsigned Opcode = MI.getOpcode();
+  bool usesBRelAddr = (Opcode == M65832::LDA_ABS ||
+                       Opcode == M65832::LDA_ABS_X ||
+                       Opcode == M65832::STA_ABS ||
+                       Opcode == M65832::STA_ABS_X ||
+                       Opcode == M65832::STZ_ABS);
+  
+  if (usesBRelAddr) {
+    // For B-relative instructions, convert frame index to immediate offset.
+    // The B register is already set up to point to the frame base.
+    MI.getOperand(FIOperandNum).ChangeToImmediate(Offset);
+  } else {
+    // For other instructions, replace frame index with frame register.
+    Register FrameReg = getFrameRegister(MF);
+    MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false);
+  }
 
   return false;
 }

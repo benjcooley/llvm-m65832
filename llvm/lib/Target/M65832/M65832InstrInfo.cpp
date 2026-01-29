@@ -422,8 +422,10 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
 
   case M65832::LA:
   case M65832::LA_EXT:
-  case M65832::LA_BA: {
+  case M65832::LA_BA:
+  case M65832::LA_CP: {
     // Load address: LD.L $dst,#addr
+    // LA_CP is for constant pool entries (floating point constants, etc.)
     Register DstReg = MI.getOperand(0).getReg();
     BuildMI(MBB, MI, DL, get(M65832::LDR_IMM), DstReg)
         .add(MI.getOperand(1)); // Copy address operand
@@ -442,10 +444,24 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     unsigned DstDP = getDPOffset(DstReg - M65832::R0);
 
     // Compute FrameReg + Offset
-    if (FrameReg == M65832::SP || FrameReg == M65832::B) {
-      // TSX; TXA; CLC; ADC #offset; STA dst
+    if (FrameReg == M65832::SP) {
+      // For SP-relative: TSX; TXA; CLC; ADC #offset; STA dst
       BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
       BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+      if (Offset != 0) {
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(Offset);
+      }
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(DstDP);
+    } else if (FrameReg == M65832::B) {
+      // For B-relative: Load B from R30 DP slot (where prologue saved it)
+      // LDA $78 (R30); CLC; ADC #offset; STA dst
+      unsigned R30DP = getDPOffset(30);  // R30's DP slot stores B
+      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(R30DP);
       if (Offset != 0) {
         BuildMI(MBB, MI, DL, get(M65832::CLC));
         BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
@@ -807,257 +823,193 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::LOAD8:
   case M65832::LOAD8_GLOBAL: {
     // Load byte from memory, zero-extended to 32-bit
+    // Uses Extended ALU LD.B instruction which explicitly encodes byte size
     Register DstReg = MI.getOperand(0).getReg();
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
 
     if (MI.getOpcode() == M65832::LOAD8_GLOBAL) {
-      // Switch to 8-bit accumulator width
-      BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
-      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+      // Load byte from global address using Extended ALU LD.B
+      BuildMI(MBB, MI, DL, get(M65832::LDB_ABS), DstReg)
           .add(MI.getOperand(1));
     } else {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        // Switch to 8-bit accumulator width
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
-        BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+        // B-relative byte load using Extended ALU LD.B abs
+        BuildMI(MBB, MI, DL, get(M65832::LDB_ABS), DstReg)
             .addImm(Offset);
       } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Stack/frame-based: compute address into X, then load via absolute,X
+        // Stack/frame-based: compute address, use indirect Y load
+        // Store base address in a temp register, set Y to offset
+        Register TempReg = M65832::R16;  // Use a temp register
         if (BaseReg == M65832::SP) {
           BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+              .addReg(M65832::X)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         } else {
           unsigned FrameDP = getDPOffset(29); // R29 = FP
           BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
+          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+              .addReg(M65832::A, RegState::Kill)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         }
-        if (Offset != 0) {
-          BuildMI(MBB, MI, DL, get(M65832::CLC));
-          BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-              .addReg(M65832::A)
-              .addImm(Offset);
-        }
-        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
-
-        // Switch to 8-bit accumulator width
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
-        BuildMI(MBB, MI, DL, get(M65832::LDA_ABS_X), M65832::A)
-            .addImm(0)
-            .addReg(M65832::X);
-      } else {
-        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
-        // Switch to 8-bit accumulator width
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        BuildMI(MBB, MI, DL, get(M65832::LDA_IND_Y), M65832::A).addImm(BaseDP);
+        // Use Extended ALU LD.B with indirect Y addressing
+        BuildMI(MBB, MI, DL, get(M65832::LDB_IND_Y), DstReg)
+            .addReg(TempReg);
+      } else {
+        // Register indirect with Y offset - use Extended ALU LD.B (dp),Y
+        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+        BuildMI(MBB, MI, DL, get(M65832::LDB_IND_Y), DstReg)
+            .addReg(BaseReg);
       }
     }
-
-    // Restore 32-bit accumulator width
-    BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x80); // set M1
-
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
     break;
   }
 
   case M65832::LOAD16:
   case M65832::LOAD16_GLOBAL: {
     // Load 16-bit from memory, zero-extended to 32-bit
+    // Uses Extended ALU LD.W instruction which explicitly encodes word size
     Register DstReg = MI.getOperand(0).getReg();
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
 
     if (MI.getOpcode() == M65832::LOAD16_GLOBAL) {
-      // Switch to 16-bit accumulator width (M1=0, M0=1)
-      BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-      BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
-      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+      // Load word from global address using Extended ALU LD.W
+      BuildMI(MBB, MI, DL, get(M65832::LDW_ABS), DstReg)
           .add(MI.getOperand(1));
     } else {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        // Switch to 16-bit accumulator width (M1=0, M0=1)
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-        BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
-        BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+        // B-relative word load using Extended ALU LD.W abs
+        BuildMI(MBB, MI, DL, get(M65832::LDW_ABS), DstReg)
             .addImm(Offset);
       } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Stack/frame-based: compute address into X, then load via absolute,X
+        // Stack/frame-based: compute address, use indirect Y load
+        Register TempReg = M65832::R16;  // Use a temp register
         if (BaseReg == M65832::SP) {
           BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+              .addReg(M65832::X)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         } else {
           unsigned FrameDP = getDPOffset(29); // R29 = FP
           BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
+          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+              .addReg(M65832::A, RegState::Kill)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         }
-        if (Offset != 0) {
-          BuildMI(MBB, MI, DL, get(M65832::CLC));
-          BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-              .addReg(M65832::A)
-              .addImm(Offset);
-        }
-        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
-
-        // Switch to 16-bit accumulator width (M1=0, M0=1)
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-        BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
-        BuildMI(MBB, MI, DL, get(M65832::LDA_ABS_X), M65832::A)
-            .addImm(0)
-            .addReg(M65832::X);
-      } else {
-        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
-        // Switch to 16-bit accumulator width (M1=0, M0=1)
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-        BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        BuildMI(MBB, MI, DL, get(M65832::LDA_IND_Y), M65832::A).addImm(BaseDP);
+        // Use Extended ALU LD.W with indirect Y addressing
+        BuildMI(MBB, MI, DL, get(M65832::LDW_IND_Y), DstReg)
+            .addReg(TempReg);
+      } else {
+        // Register indirect with Y offset - use Extended ALU LD.W (dp),Y
+        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+        BuildMI(MBB, MI, DL, get(M65832::LDW_IND_Y), DstReg)
+            .addReg(BaseReg);
       }
     }
-
-    // Restore 32-bit accumulator width (M1=1, M0=0)
-    BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x80); // set M1
-    BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x40); // clear M0
-
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
     break;
   }
 
   case M65832::STORE8:
   case M65832::STORE8_GLOBAL: {
     // Truncating store - store only low 8 bits
-    // The 6502 STA in 8-bit mode stores only 8 bits
+    // Uses Extended ALU ST.B instruction which explicitly encodes byte size
     Register SrcReg = MI.getOperand(0).getReg();
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
 
     if (MI.getOpcode() == M65832::STORE8_GLOBAL) {
-      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-      // Switch to 8-bit accumulator width
-      BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
-      BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
-          .addReg(M65832::A, RegState::Kill)
+      // Store byte to global address using Extended ALU ST.B
+      BuildMI(MBB, MI, DL, get(M65832::STB_ABS))
+          .addReg(SrcReg)
           .add(MI.getOperand(1));
     } else {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-        // Switch to 8-bit accumulator width
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
-        BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
-            .addReg(M65832::A, RegState::Kill)
+        // B-relative byte store using Extended ALU ST.B abs
+        BuildMI(MBB, MI, DL, get(M65832::STB_ABS))
+            .addReg(SrcReg)
             .addImm(Offset);
       } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Compute address into X, then store via absolute,X
+        // Stack/frame-based: compute address, use indirect Y store
+        Register TempReg = M65832::R16;  // Use a temp register
         if (BaseReg == M65832::SP) {
           BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+              .addReg(M65832::X)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         } else {
           unsigned FrameDP = getDPOffset(29); // R29 = FP
           BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
+          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+              .addReg(M65832::A, RegState::Kill)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         }
-        if (Offset != 0) {
-          BuildMI(MBB, MI, DL, get(M65832::CLC));
-          BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-              .addReg(M65832::A)
-              .addImm(Offset);
-        }
-        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
-
-        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-        // Switch to 8-bit accumulator width
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
-        BuildMI(MBB, MI, DL, get(M65832::STA_ABS_X))
-            .addReg(M65832::A, RegState::Kill)
-            .addImm(0)
-            .addReg(M65832::X);
-      } else {
-        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
-        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-        // Switch to 8-bit accumulator width
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0xC0); // clear M0/M1
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
-            .addReg(M65832::A, RegState::Kill)
-            .addImm(BaseDP);
+        // Use Extended ALU ST.B with indirect Y addressing
+        BuildMI(MBB, MI, DL, get(M65832::STB_IND_Y))
+            .addReg(SrcReg)
+            .addReg(TempReg);
+      } else {
+        // Register indirect with Y offset - use Extended ALU ST.B (dp),Y
+        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+        BuildMI(MBB, MI, DL, get(M65832::STB_IND_Y))
+            .addReg(SrcReg)
+            .addReg(BaseReg);
       }
     }
-
-    // Restore 32-bit accumulator width
-    BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x80); // set M1
     break;
   }
 
   case M65832::STORE16:
   case M65832::STORE16_GLOBAL: {
     // Truncating store - store only low 16 bits
+    // Uses Extended ALU ST.W instruction which explicitly encodes word size
     Register SrcReg = MI.getOperand(0).getReg();
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
 
     if (MI.getOpcode() == M65832::STORE16_GLOBAL) {
-      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-      // Switch to 16-bit accumulator width (M1=0, M0=1)
-      BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-      BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
-      BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
-          .addReg(M65832::A, RegState::Kill)
+      // Store word to global address using Extended ALU ST.W
+      BuildMI(MBB, MI, DL, get(M65832::STW_ABS))
+          .addReg(SrcReg)
           .add(MI.getOperand(1));
     } else {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-        // Switch to 16-bit accumulator width (M1=0, M0=1)
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-        BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
-        BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
-            .addReg(M65832::A, RegState::Kill)
+        // B-relative word store using Extended ALU ST.W abs
+        BuildMI(MBB, MI, DL, get(M65832::STW_ABS))
+            .addReg(SrcReg)
             .addImm(Offset);
       } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Compute address into X, then store via absolute,X
+        // Stack/frame-based: compute address, use indirect Y store
+        Register TempReg = M65832::R16;  // Use a temp register
         if (BaseReg == M65832::SP) {
           BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+              .addReg(M65832::X)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         } else {
           unsigned FrameDP = getDPOffset(29); // R29 = FP
           BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
+          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+              .addReg(M65832::A, RegState::Kill)
+              .addImm(getDPOffset(TempReg - M65832::R0));
         }
-        if (Offset != 0) {
-          BuildMI(MBB, MI, DL, get(M65832::CLC));
-          BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-              .addReg(M65832::A)
-              .addImm(Offset);
-        }
-        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
-
-        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-        // Switch to 16-bit accumulator width (M1=0, M0=1)
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-        BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
-        BuildMI(MBB, MI, DL, get(M65832::STA_ABS_X))
-            .addReg(M65832::A, RegState::Kill)
-            .addImm(0)
-            .addReg(M65832::X);
-      } else {
-        unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
-        BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-        // Switch to 16-bit accumulator width (M1=0, M0=1)
-        BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x80); // clear M1
-        BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x40); // set M0
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
-            .addReg(M65832::A, RegState::Kill)
-            .addImm(BaseDP);
+        // Use Extended ALU ST.W with indirect Y addressing
+        BuildMI(MBB, MI, DL, get(M65832::STW_IND_Y))
+            .addReg(SrcReg)
+            .addReg(TempReg);
+      } else {
+        // Register indirect with Y offset - use Extended ALU ST.W (dp),Y
+        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+        BuildMI(MBB, MI, DL, get(M65832::STW_IND_Y))
+            .addReg(SrcReg)
+            .addReg(BaseReg);
       }
     }
-
-    // Restore 32-bit accumulator width (M1=1, M0=0)
-    BuildMI(MBB, MI, DL, get(M65832::SEP)).addImm(0x80); // set M1
-    BuildMI(MBB, MI, DL, get(M65832::REP)).addImm(0x40); // clear M0
     break;
   }
 
