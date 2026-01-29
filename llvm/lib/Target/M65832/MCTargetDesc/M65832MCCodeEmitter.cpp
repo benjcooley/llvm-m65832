@@ -102,13 +102,17 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::LDA_ABS:   return 0xAD;
   case M65832::LDA_ABS_X: return 0xBD;
   case M65832::LDA_IND:   return 0xB2;
+  case M65832::LDA_IND_r: return 0xB2;  // GPR indirect variant
   case M65832::LDA_IND_Y: return 0xB1;
+  case M65832::LDA_IND_Y_r: return 0xB1;  // GPR indirect Y variant
   case M65832::STA_DP:    return 0x85;
   case M65832::STAr:      return 0x85;  // GPR variant uses same opcode
   case M65832::STA_ABS:   return 0x8D;
   case M65832::STA_ABS_X: return 0x9D;
   case M65832::STA_IND:   return 0x92;
+  case M65832::STA_IND_r: return 0x92;  // GPR indirect variant
   case M65832::STA_IND_Y: return 0x91;
+  case M65832::STA_IND_Y_r: return 0x91;  // GPR indirect Y variant
   case M65832::LDX_DP:    return 0xA6;
   case M65832::LDXr:      return 0xA6;  // GPR variant uses same opcode
   case M65832::LDX_IMM:   return 0xA2;
@@ -127,6 +131,8 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::ADC_DP:    return 0x65;
   case M65832::ADCr:      return 0x65;  // GPR variant uses same opcode
   case M65832::ADC_IMM:   return 0x69;
+  case M65832::ADC_IND_r: return 0x72;  // GPR indirect variant
+  case M65832::ADC_IND_Y_r: return 0x71;  // GPR indirect Y variant
   case M65832::SBC_DP:    return 0xE5;
   case M65832::SBCr:      return 0xE5;  // GPR variant uses same opcode
   case M65832::SBC_IMM:   return 0xE9;
@@ -240,6 +246,8 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::RCLR:      return 0x31;
   case M65832::TRAP:      return 0x40;
   case M65832::FENCE:     return 0x50;
+  case M65832::FENCER:    return 0x51;
+  case M65832::FENCEW:    return 0x52;
   case M65832::TTA:       return 0x9A;
   case M65832::TAT:       return 0x9B;
   
@@ -425,6 +433,8 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   case M65832::RSET:
   case M65832::RCLR:
   case M65832::FENCE:
+  case M65832::FENCER:
+  case M65832::FENCEW:
   case M65832::TTA:
   case M65832::TAT: {
     emitByte(EXT_PREFIX, CB);
