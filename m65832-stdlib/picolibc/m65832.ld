@@ -78,13 +78,16 @@ SECTIONS
     } > ROM
 
     /* TLS template (thread-local storage) */
+    /* Note: For ELF loaders that load to vaddr, we don't use AT > ROM
+     * because the loader already places data at the correct address.
+     * For ROM-based systems, change to: > RAM AT > ROM */
     .tdata :
     {
         . = ALIGN(4);
         __tdata_start = .;
         *(.tdata .tdata.*)
         __tdata_end = .;
-    } > RAM AT > ROM
+    } > RAM
     
     __tdata_source = LOADADDR(.tdata);
     __tdata_size = __tdata_end - __tdata_start;
@@ -101,7 +104,10 @@ SECTIONS
     __tls_size = __tbss_end - __tdata_start;
     __tls_align = MAX(ALIGNOF(.tdata), ALIGNOF(.tbss));
 
-    /* Initialized data - loaded from ROM, copied to RAM */
+    /* Initialized data section
+     * Note: For ELF loaders that load to vaddr, we don't use AT > ROM
+     * because the loader already places data at the correct address.
+     * For ROM-based systems, change to: > RAM AT > ROM */
     .data :
     {
         . = ALIGN(4);
@@ -112,7 +118,7 @@ SECTIONS
         *(.sdata.*)
         . = ALIGN(4);
         _data_end = .;
-    } > RAM AT > ROM
+    } > RAM
     
     _data_load = LOADADDR(.data);
 
