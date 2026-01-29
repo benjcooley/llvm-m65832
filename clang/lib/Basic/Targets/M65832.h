@@ -24,6 +24,7 @@ namespace targets {
 // M65832 Target - 32-bit 6502 derivative
 class LLVM_LIBRARY_VISIBILITY M65832TargetInfo : public TargetInfo {
   static const char *const GCCRegNames[];
+  static const TargetInfo::GCCRegAlias GCCRegAliases[];
 
 public:
   M65832TargetInfo(const llvm::Triple &Triple, const TargetOptions &)
@@ -94,15 +95,7 @@ public:
 
   ArrayRef<const char *> getGCCRegNames() const override;
 
-  ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override {
-    // Map common aliases to canonical names
-    static const TargetInfo::GCCRegAlias GCCRegAliases[] = {
-        {{"gp"}, "r28"},
-        {{"fp"}, "r29"},
-        {{"lr"}, "r30"},
-    };
-    return llvm::ArrayRef(GCCRegAliases);
-  }
+  ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override;
 
   bool validateAsmConstraint(const char *&Name,
                              TargetInfo::ConstraintInfo &Info) const override {
@@ -113,6 +106,7 @@ public:
     case 'a': // Accumulator
     case 'x': // X index register
     case 'y': // Y index register
+    case 'f': // FPU register
       Info.setAllowsRegister();
       return true;
     case 'I': // 8-bit immediate

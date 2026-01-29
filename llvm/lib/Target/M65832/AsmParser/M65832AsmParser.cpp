@@ -126,6 +126,30 @@ public:
 
   // AsmMatcher operand type predicates
   bool isM65832Imm() const { return Kind == k_Immediate; }
+  
+  // Check if this is a GPR register (R0-R63)
+  bool isGPRReg() const {
+    if (Kind != k_Register)
+      return false;
+    unsigned RegNo = Reg.RegNum;
+    return RegNo >= M65832::R0 && RegNo <= M65832::R63;
+  }
+  
+  // Check if this is indirect register addressing (Rn) - memory with BaseReg set
+  bool isIndirectReg() const {
+    if (Kind != k_Memory)
+      return false;
+    // Must have BaseReg set, be indirect, no Y index
+    return Mem.BaseReg != 0 && Mem.Indirect && Mem.IndexReg == 0;
+  }
+  
+  // Check if this is indirect Y-indexed addressing (Rn),Y
+  bool isIndirectRegY() const {
+    if (Kind != k_Memory)
+      return false;
+    // Must have BaseReg set, be indirect, with Y index
+    return Mem.BaseReg != 0 && Mem.Indirect && Mem.IndexReg == M65832::Y;
+  }
 
   StringRef getToken() const {
     assert(Kind == k_Token && "Not a token");
@@ -176,8 +200,16 @@ public:
 
   void addMemOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    // Memory operand - add displacement as expression
-    Inst.addOperand(MCOperand::createExpr(Mem.Disp));
+    // Memory operand - if we have a base register (indirect register addressing),
+    // add it as a register operand; otherwise add displacement as expression
+    if (Mem.BaseReg != 0) {
+      Inst.addOperand(MCOperand::createReg(Mem.BaseReg));
+    } else if (Mem.Disp) {
+      Inst.addOperand(MCOperand::createExpr(Mem.Disp));
+    } else {
+      // Fallback - should not happen
+      Inst.addOperand(MCOperand::createImm(0));
+    }
   }
 };
 
@@ -443,9 +475,34 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   if (getParser().getTok().is(AsmToken::LParen)) {
     Indirect = true;
     getParser().Lex();
+    
+    // Check if the next token is a GPR register (for indirect register addressing)
+    // In M65832 32-bit mode, (Rn) means indirect through register Rn (true register, not DP)
+    if (getParser().getTok().is(AsmToken::Identifier)) {
+      StringRef TokStr = getParser().getTok().getString();
+      unsigned RegNo = parseRegisterName(TokStr);
+      if (RegNo != 0 && RegNo >= M65832::R0 && RegNo <= M65832::R63) {
+        // Indirect register addressing: (Rn) - store the register
+        BaseReg = RegNo;
+        getParser().Lex();  // Consume the register name
+        goto close_paren;
+      }
+    }
   } else if (getParser().getTok().is(AsmToken::LBrac)) {
     IndirectLong = true;
     getParser().Lex();
+    
+    // Check if the next token is a GPR register
+    if (getParser().getTok().is(AsmToken::Identifier)) {
+      StringRef TokStr = getParser().getTok().getString();
+      unsigned RegNo = parseRegisterName(TokStr);
+      if (RegNo != 0 && RegNo >= M65832::R0 && RegNo <= M65832::R63) {
+        // Indirect long register addressing: [Rn]
+        BaseReg = RegNo;
+        getParser().Lex();  // Consume the register name
+        goto close_bracket;
+      }
+    }
   }
 
   // Parse displacement using M65832 expression parser
@@ -470,6 +527,7 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
 
   // Close bracket
   if (Indirect) {
+close_paren:
     if (!getParser().getTok().is(AsmToken::RParen))
       return Error(getParser().getTok().getLoc(), "expected ')'");
     getParser().Lex();
@@ -482,6 +540,7 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
       }
     }
   } else if (IndirectLong) {
+close_bracket:
     if (!getParser().getTok().is(AsmToken::RBrac))
       return Error(getParser().getTok().getLoc(), "expected ']'");
     getParser().Lex();
@@ -604,19 +663,8 @@ bool M65832AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
 unsigned M65832AsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
                                                       unsigned Kind) {
-  M65832Operand &Op = static_cast<M65832Operand &>(AsmOp);
-  
-  // Memory operands can match Mem, calltarget, brtarget, BankRelOp, DPOp
-  if (Op.isMem()) {
-    // Accept memory operands for any memory-like operand class
-    return Match_Success;
-  }
-  
-  // Immediate operands 
-  if (Op.isImm()) {
-    return Match_Success;
-  }
-  
+  (void)AsmOp;
+  (void)Kind;
   return Match_InvalidOperand;
 }
 

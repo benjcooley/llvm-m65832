@@ -97,55 +97,74 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   switch (MIOpcode) {
   // Load/Store
   case M65832::LDA_DP:    return 0xA5;
+  case M65832::LDAr:      return 0xA5;  // GPR variant uses same opcode
   case M65832::LDA_IMM:   return 0xA9;
   case M65832::LDA_ABS:   return 0xAD;
   case M65832::LDA_ABS_X: return 0xBD;
   case M65832::LDA_IND:   return 0xB2;
   case M65832::LDA_IND_Y: return 0xB1;
   case M65832::STA_DP:    return 0x85;
+  case M65832::STAr:      return 0x85;  // GPR variant uses same opcode
   case M65832::STA_ABS:   return 0x8D;
   case M65832::STA_ABS_X: return 0x9D;
   case M65832::STA_IND:   return 0x92;
   case M65832::STA_IND_Y: return 0x91;
   case M65832::LDX_DP:    return 0xA6;
+  case M65832::LDXr:      return 0xA6;  // GPR variant uses same opcode
   case M65832::LDX_IMM:   return 0xA2;
   case M65832::LDY_DP:    return 0xA4;
+  case M65832::LDYr:      return 0xA4;  // GPR variant uses same opcode
   case M65832::LDY_IMM:   return 0xA0;
   case M65832::STX_DP:    return 0x86;
+  case M65832::STXr:      return 0x86;  // GPR variant uses same opcode
   case M65832::STY_DP:    return 0x84;
+  case M65832::STYr:      return 0x84;  // GPR variant uses same opcode
   case M65832::STZ_DP:    return 0x64;
+  case M65832::STZr:      return 0x64;  // GPR variant uses same opcode
   case M65832::STZ_ABS:   return 0x9C;
   
   // Arithmetic
   case M65832::ADC_DP:    return 0x65;
+  case M65832::ADCr:      return 0x65;  // GPR variant uses same opcode
   case M65832::ADC_IMM:   return 0x69;
   case M65832::SBC_DP:    return 0xE5;
+  case M65832::SBCr:      return 0xE5;  // GPR variant uses same opcode
   case M65832::SBC_IMM:   return 0xE9;
   case M65832::INC_A:     return 0x1A;
   case M65832::DEC_A:     return 0x3A;
   case M65832::INC_DP:    return 0xE6;
+  case M65832::INCr:      return 0xE6;  // GPR variant uses same opcode
   case M65832::DEC_DP:    return 0xC6;
+  case M65832::DECr:      return 0xC6;  // GPR variant uses same opcode
   
   // Logic
   case M65832::AND_DP:    return 0x25;
+  case M65832::ANDr:      return 0x25;  // GPR variant uses same opcode
   case M65832::AND_IMM:   return 0x29;
   case M65832::ORA_DP:    return 0x05;
+  case M65832::ORAr:      return 0x05;  // GPR variant uses same opcode
   case M65832::ORA_IMM:   return 0x09;
   case M65832::EOR_DP:    return 0x45;
+  case M65832::EORr:      return 0x45;  // GPR variant uses same opcode
   case M65832::EOR_IMM:   return 0x49;
   
   // Shift
   case M65832::ASL_A:     return 0x0A;
   case M65832::ASL_DP:    return 0x06;
+  case M65832::ASLr:      return 0x06;  // GPR variant uses same opcode
   case M65832::LSR_A:     return 0x4A;
   case M65832::LSR_DP:    return 0x46;
+  case M65832::LSRr:      return 0x46;  // GPR variant uses same opcode
   case M65832::ROL_A:     return 0x2A;
   case M65832::ROL_DP:    return 0x26;
+  case M65832::ROLr:      return 0x26;  // GPR variant uses same opcode
   case M65832::ROR_A:     return 0x6A;
   case M65832::ROR_DP:    return 0x66;
+  case M65832::RORr:      return 0x66;  // GPR variant uses same opcode
   
   // Compare
   case M65832::CMP_DP:    return 0xC5;
+  case M65832::CMPr:      return 0xC5;  // GPR variant uses same opcode
   case M65832::CMP_IMM:   return 0xC9;
   case M65832::SB_IMM:    return 0x22;
   case M65832::SB_DP:     return 0x23;
@@ -168,6 +187,12 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::TYA:       return 0x98;
   case M65832::TSX:       return 0xBA;
   case M65832::TXS:       return 0x9A;
+  
+  // Increment/Decrement X/Y
+  case M65832::INX:       return 0xE8;
+  case M65832::INY:       return 0xC8;
+  case M65832::DEX:       return 0xCA;
+  case M65832::DEY:       return 0x88;
   
   // Branch
   case M65832::BEQ:       return 0xF0;

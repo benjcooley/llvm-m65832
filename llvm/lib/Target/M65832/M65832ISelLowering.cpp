@@ -1179,9 +1179,22 @@ M65832TargetLowering::getConstraintType(StringRef Constraint) const {
       break;
     case 'r':  // General-purpose register
     case 'a':  // Accumulator A
+    case 'x':  // X index register
+    case 'y':  // Y index register
+    case 'f':  // FPU register
       return C_RegisterClass;
+    case 'm':  // Memory operand
+    case 'o':  // Memory operand with offsettable addressing
+      return C_Memory;
     }
   }
+
+  // Explicit register constraints: {R0}, {A}, etc.
+  if (Constraint.size() > 2 && Constraint.front() == '{' &&
+      Constraint.back() == '}') {
+    return C_Register;
+  }
+
   return TargetLowering::getConstraintType(Constraint);
 }
 
@@ -1202,7 +1215,95 @@ M65832TargetLowering::getRegForInlineAsmConstraint(
       if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8)
         return std::make_pair(M65832::A, &M65832::ACCRegClass);
       break;
+    case 'x':
+      // X index register
+      if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8)
+        return std::make_pair(M65832::X, &M65832::XREGRegClass);
+      break;
+    case 'y':
+      // Y index register
+      if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8)
+        return std::make_pair(M65832::Y, &M65832::YREGRegClass);
+      break;
+    case 'f':
+      // FPU register
+      if (VT == MVT::f64)
+        return std::make_pair(0U, &M65832::FPR64RegClass);
+      if (VT == MVT::f32)
+        return std::make_pair(0U, &M65832::FPR32RegClass);
+      break;
     }
   }
+
+  // Handle explicit register names: {R0}, {R1}, ..., {R63}, {A}, {X}, {Y}, etc.
+  if (Constraint.size() > 2 && Constraint.front() == '{' &&
+      Constraint.back() == '}') {
+    StringRef RegName = Constraint.slice(1, Constraint.size() - 1);
+
+    // GPR registers R0-R63 (case-insensitive)
+    if (RegName.size() >= 2 &&
+        (RegName[0] == 'R' || RegName[0] == 'r')) {
+      unsigned RegNum;
+      if (!RegName.substr(1).getAsInteger(10, RegNum) && RegNum <= 63) {
+        static const unsigned GPRRegs[] = {
+          M65832::R0,  M65832::R1,  M65832::R2,  M65832::R3,
+          M65832::R4,  M65832::R5,  M65832::R6,  M65832::R7,
+          M65832::R8,  M65832::R9,  M65832::R10, M65832::R11,
+          M65832::R12, M65832::R13, M65832::R14, M65832::R15,
+          M65832::R16, M65832::R17, M65832::R18, M65832::R19,
+          M65832::R20, M65832::R21, M65832::R22, M65832::R23,
+          M65832::R24, M65832::R25, M65832::R26, M65832::R27,
+          M65832::R28, M65832::R29, M65832::R30, M65832::R31,
+          M65832::R32, M65832::R33, M65832::R34, M65832::R35,
+          M65832::R36, M65832::R37, M65832::R38, M65832::R39,
+          M65832::R40, M65832::R41, M65832::R42, M65832::R43,
+          M65832::R44, M65832::R45, M65832::R46, M65832::R47,
+          M65832::R48, M65832::R49, M65832::R50, M65832::R51,
+          M65832::R52, M65832::R53, M65832::R54, M65832::R55,
+          M65832::R56, M65832::R57, M65832::R58, M65832::R59,
+          M65832::R60, M65832::R61, M65832::R62, M65832::R63
+        };
+        return std::make_pair(GPRRegs[RegNum], &M65832::GPRRegClass);
+      }
+    }
+
+    // FPU registers F0-F15 (case-insensitive)
+    if (RegName.size() >= 2 &&
+        (RegName[0] == 'F' || RegName[0] == 'f')) {
+      unsigned RegNum;
+      if (!RegName.substr(1).getAsInteger(10, RegNum) && RegNum <= 15) {
+        static const unsigned FPRRegs[] = {
+          M65832::F0,  M65832::F1,  M65832::F2,  M65832::F3,
+          M65832::F4,  M65832::F5,  M65832::F6,  M65832::F7,
+          M65832::F8,  M65832::F9,  M65832::F10, M65832::F11,
+          M65832::F12, M65832::F13, M65832::F14, M65832::F15
+        };
+        if (VT == MVT::f64)
+          return std::make_pair(FPRRegs[RegNum], &M65832::FPR64RegClass);
+        return std::make_pair(FPRRegs[RegNum], &M65832::FPR32RegClass);
+      }
+    }
+
+    // Architectural registers (case-insensitive)
+    if (RegName.equals_insensitive("a"))
+      return std::make_pair(M65832::A, &M65832::ACCRegClass);
+    if (RegName.equals_insensitive("x"))
+      return std::make_pair(M65832::X, &M65832::IDXREGRegClass);
+    if (RegName.equals_insensitive("y"))
+      return std::make_pair(M65832::Y, &M65832::IDXREGRegClass);
+    if (RegName.equals_insensitive("sp"))
+      return std::make_pair(M65832::SP, &M65832::SPREGRegClass);
+    if (RegName.equals_insensitive("t"))
+      return std::make_pair(M65832::T, &M65832::TREGRegClass);
+
+    // Also handle aliases: gp, fp, lr
+    if (RegName.equals_insensitive("gp"))
+      return std::make_pair(M65832::R28, &M65832::GPRRegClass);
+    if (RegName.equals_insensitive("fp"))
+      return std::make_pair(M65832::R29, &M65832::GPRRegClass);
+    if (RegName.equals_insensitive("lr"))
+      return std::make_pair(M65832::R30, &M65832::GPRRegClass);
+  }
+
   return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }

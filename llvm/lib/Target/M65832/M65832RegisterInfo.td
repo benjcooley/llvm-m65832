@@ -194,6 +194,11 @@ def XREG : RegisterClass<"M65832", [i32], 32, (add X)> {
   let CopyCost = 2;
 }
 
+// Y register specifically (for inline asm constraint)
+def YREG : RegisterClass<"M65832", [i32], 32, (add Y)> {
+  let CopyCost = 2;
+}
+
 // Combined A/X/Y - useful as scratch when needed
 def AXY : RegisterClass<"M65832", [i32], 32, (add A, X, Y)> {
   let CopyCost = 2;

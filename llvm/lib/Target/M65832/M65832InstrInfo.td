@@ -111,6 +111,47 @@ def M65832ImmAsmOperand : AsmOperandClass {
   let RenderMethod = "addImmOperands";
 }
 
+// AsmOperandClass for GPR registers - for instructions that accept R0-R63
+def M65832GPRAsmOperand : AsmOperandClass {
+  let Name = "GPRReg";
+  let RenderMethod = "addRegOperands";
+}
+
+// GPR operand for assembly - matches R0-R63 register operands
+def GPROp : Operand<i32> {
+  let PrintMethod = "printOperand";
+  let EncoderMethod = "getGPROpValue";
+  let ParserMatchClass = M65832GPRAsmOperand;
+}
+
+// Parser match class for indirect register operands (Rn)
+def M65832IndirectRegAsmOperand : AsmOperandClass {
+  let Name = "IndirectReg";
+  let RenderMethod = "addMemOperands";
+  let PredicateMethod = "isIndirectReg";
+}
+
+// Parser match class for indirect Y-indexed operands (Rn),Y
+def M65832IndirectRegYAsmOperand : AsmOperandClass {
+  let Name = "IndirectRegY";
+  let RenderMethod = "addMemOperands";
+  let PredicateMethod = "isIndirectRegY";
+}
+
+// GPR indirect operand - prints as (Rn) for indirect addressing
+def GPRInd : Operand<i32> {
+  let PrintMethod = "printIndirectOperand";
+  let EncoderMethod = "getGPROpValue";
+  let ParserMatchClass = M65832IndirectRegAsmOperand;
+}
+
+// GPR indirect Y-indexed operand - prints as (Rn),Y
+def GPRIndY : Operand<i32> {
+  let PrintMethod = "printIndirectYOperand";
+  let EncoderMethod = "getGPROpValue";
+  let ParserMatchClass = M65832IndirectRegYAsmOperand;
+}
+
 // Direct Page operand (register number * 4)
 def DPOp : Operand<i32> {
   let PrintMethod = "printDPOperand";
@@ -397,91 +438,91 @@ let isCodeGenOnly = 1, Defs = [SR] in {
 let Defs = [SR] in {
   // ADD (via ADC): dest = dest + src
   def ADDR_DP : FE8_DP<0x82, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "ADC.L\t$dst,$src2",
+                       "ADC\t$dst,$src2",
                        []> {
     let Constraints = "$src1 = $dst";
   }
 
   // SUB (via SBC): dest = dest - src
   def SUBR_DP : FE8_DP<0x83, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "SBC.L\t$dst,$src2",
+                       "SBC\t$dst,$src2",
                        []> {
     let Constraints = "$src1 = $dst";
   }
 
   // AND: dest = dest & src (extended form - avoid, prefer AND_GPR)
   def ANDR_DP : FE8_DP<0x84, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "AND.L\t$dst,$src2",
+                       "AND\t$dst,$src2",
                        []> {  // No pattern - prefer A-centric AND_GPR
     let Constraints = "$src1 = $dst";
   }
 
   // ORA: dest = dest | src (extended form - avoid, prefer ORA_GPR)
   def ORAR_DP : FE8_DP<0x85, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "ORA.L\t$dst,$src2",
+                       "ORA\t$dst,$src2",
                        []> {  // No pattern - prefer A-centric ORA_GPR
     let Constraints = "$src1 = $dst";
   }
 
   // EOR: dest = dest ^ src (extended form - avoid, prefer EOR_GPR)
   def EORR_DP : FE8_DP<0x86, (outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
-                       "EOR.L\t$dst,$src2",
+                       "EOR\t$dst,$src2",
                        []> {  // No pattern - prefer A-centric EOR_GPR
     let Constraints = "$src1 = $dst";
   }
 
   // CMP: flags = dest - src (no writeback)
   def CMPR_DP : FE8_DP<0x87, (outs), (ins GPR:$lhs, GPR:$rhs),
-                       "CMP.L\t$lhs,$rhs",
+                       "CMP\t$lhs,$rhs",
                        [(M65832cmp GPR:$lhs, GPR:$rhs)]>;
 }
 
 // MOV (via LD): dest = src - does NOT set flags in 32-bit mode
 def MOVR_DP : FE8_DP<0x80, (outs GPR:$dst), (ins GPR:$src),
-                     "LD.L\t$dst,$src",
+                     "LD\t$dst,$src",
                      []>;
 
 let Defs = [SR] in {
 
   // Immediate forms (Mode=$2)
   def ADDR_IMM : FE8_IMM<0x82, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "ADC.L\t$dst,#$imm",
+                         "ADC\t$dst,#$imm",
                          []> {
     let Constraints = "$src = $dst";
   }
 
   def SUBR_IMM : FE8_IMM<0x83, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "SBC.L\t$dst,#$imm",
+                         "SBC\t$dst,#$imm",
                          []> {
     let Constraints = "$src = $dst";
   }
 
   def ANDR_IMM : FE8_IMM<0x84, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "AND.L\t$dst,#$imm",
+                         "AND\t$dst,#$imm",
                          []> {  // No pattern - prefer A-centric ANDI_GPR
     let Constraints = "$src = $dst";
   }
 
   def ORAR_IMM : FE8_IMM<0x85, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "ORA.L\t$dst,#$imm",
+                         "ORA\t$dst,#$imm",
                          []> {  // No pattern - prefer A-centric ORI_GPR
     let Constraints = "$src = $dst";
   }
 
   def EORR_IMM : FE8_IMM<0x86, (outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
-                         "EOR.L\t$dst,#$imm",
+                         "EOR\t$dst,#$imm",
                          []> {  // No pattern - prefer A-centric XORI_GPR
     let Constraints = "$src = $dst";
   }
 
   def CMPR_IMM : FE8_IMM<0x87, (outs), (ins GPR:$lhs, i32imm:$rhs),
-                         "CMP.L\t$lhs,#$rhs",
+                         "CMP\t$lhs,#$rhs",
                          [(M65832cmp GPR:$lhs, imm:$rhs)]>;
 }
 
 // Load immediate into register - does NOT set flags in 32-bit mode
 def LDR_IMM : FE8_IMM<0x80, (outs GPR:$dst), (ins i32imm:$imm),
-                      "LD.L\t$dst,#$imm",
+                      "LD\t$dst,#$imm",
                       [(set GPR:$dst, imm:$imm)]>;
 
 //===----------------------------------------------------------------------===//
@@ -1007,6 +1048,12 @@ def TYA : F0<0x98, (outs ACC:$dst), (ins), "TYA", []> { let Defs = [SR]; let Use
 def TSX : F0<0xBA, (outs XREG:$dst), (ins), "TSX", []> { let Defs = [SR]; let Uses = [SP]; }
 def TXS : F0<0x9A, (outs), (ins XREG:$src), "TXS", []> { let Defs = [SP]; }
 
+// Increment/Decrement X and Y registers
+def INX : F0<0xE8, (outs), (ins), "INX", []> { let Defs = [SR, X]; let Uses = [X]; }
+def INY : F0<0xC8, (outs), (ins), "INY", []> { let Defs = [SR, Y]; let Uses = [Y]; }
+def DEX : F0<0xCA, (outs), (ins), "DEX", []> { let Defs = [SR, X]; let Uses = [X]; }
+def DEY : F0<0x88, (outs), (ins), "DEY", []> { let Defs = [SR, Y]; let Uses = [Y]; }
+
 //===----------------------------------------------------------------------===//
 // Branch Instructions
 //===----------------------------------------------------------------------===//
@@ -1376,6 +1423,51 @@ def RCLR : F7_Imp<0x31, (outs), (ins), "rclr", []> {
 // FENCE - Memory Fence
 def FENCE : F7_Imp<0x50, (outs), (ins), "fence", []> {
   let hasSideEffects = 1;
+}
+
+// FENCER - Read Memory Fence
+def FENCER : F7_Imp<0x51, (outs), (ins), "fencer", []> {
+  let hasSideEffects = 1;
+}
+
+// FENCEW - Write Memory Fence
+def FENCEW : F7_Imp<0x52, (outs), (ins), "fencew", []> {
+  let hasSideEffects = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Atomic Instructions (Load-Linked / Store-Conditional)
+//===----------------------------------------------------------------------===//
+// These instructions provide atomic read-modify-write capability.
+// LLI: Load-Linked Integer - loads value and marks address for atomic tracking
+// SCI: Store-Conditional Integer - stores value only if address not modified
+//      Sets carry flag on success, clears on failure
+
+let Predicates = [HasAtomics] in {
+  // LLI Rd, (Rs) - Load-Linked: Rd = *Rs, mark Rs for atomic tracking
+  def LLI : Pseudo<(outs GPR:$dst), (ins GPR:$addr),
+                   "lli\t$dst, ($addr)", []> {
+    let mayLoad = 1;
+    let hasSideEffects = 1;
+  }
+  
+  // SCI Rd, (Rs) - Store-Conditional: if not modified, *Rs = Rd, C=1; else C=0
+  def SCI : Pseudo<(outs), (ins GPR:$src, GPR:$addr),
+                   "sci\t$src, ($addr)", []> {
+    let mayStore = 1;
+    let hasSideEffects = 1;
+    let Defs = [SR];
+  }
+  
+  // CAS - Compare-And-Swap (hardware atomic): if *addr == expected, *addr = desired
+  // Result: old value, sets Z flag if swap succeeded
+  def CAS : Pseudo<(outs GPR:$dst), (ins GPR:$addr, GPR:$expected, GPR:$desired),
+                   "cas\t$dst, ($addr), $expected, $desired", []> {
+    let mayLoad = 1;
+    let mayStore = 1;
+    let hasSideEffects = 1;
+    let Defs = [SR];
+  }
 }
 
 // TTA - Transfer T to A
@@ -1780,6 +1872,162 @@ def FCVT_SD : Instruction {
   let AsmString = "FCVT.SD\t$dst, $Fs";
   let Pattern = [(set FPR32:$dst, (fpround FPR64:$Fs))];
   let Size = 3;
+}
+
+//===----------------------------------------------------------------------===//
+// GPR Register Operand Instructions (for inline assembly)
+//
+// In 32-bit mode, R0-R63 are true general-purpose registers. These
+// instruction variants accept GPR operands directly for inline assembly
+// support. They encode identically to the DPOp versions.
+// Named with 'r' suffix to avoid conflict with codegen pseudo instructions.
+//===----------------------------------------------------------------------===//
+
+let isAsmParserOnly = 1 in {
+  // LDA from GPR
+  def LDAr : F1<0xA5, (outs ACC:$dst), (ins GPR:$src),
+                "LDA\t$src", []>;
+  
+  // STA to GPR
+  def STAr : F1<0x85, (outs), (ins ACC:$src, GPR:$dst),
+                "STA\t$dst", []>;
+  
+  // LDX from GPR
+  def LDXr : F1<0xA6, (outs XREG:$dst), (ins GPR:$src),
+                "LDX\t$src", []>;
+  
+  // STX to GPR
+  def STXr : F1<0x86, (outs), (ins XREG:$src, GPR:$dst),
+                "STX\t$dst", []>;
+  
+  // LDY from GPR
+  def LDYr : F1<0xA4, (outs IDXREG:$dst), (ins GPR:$src),
+                "LDY\t$src", []>;
+  
+  // STY to GPR
+  def STYr : F1<0x84, (outs), (ins IDXREG:$src, GPR:$dst),
+                "STY\t$dst", []>;
+  
+  // ADC with GPR
+  def ADCr : F1<0x65, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+                "ADC\t$src2", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+    let Uses = [SR];
+  }
+  
+  // SBC with GPR
+  def SBCr : F1<0xE5, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+                "SBC\t$src2", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+    let Uses = [SR];
+  }
+  
+  // AND with GPR
+  def ANDr : F1<0x25, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+                "AND\t$src2", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+  }
+  
+  // ORA with GPR
+  def ORAr : F1<0x05, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+                "ORA\t$src2", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+  }
+  
+  // EOR with GPR
+  def EORr : F1<0x45, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+                "EOR\t$src2", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+  }
+  
+  // CMP with GPR
+  def CMPr : F1<0xC5, (outs), (ins ACC:$lhs, GPR:$rhs),
+                "CMP\t$rhs", []> {
+    let Defs = [SR];
+  }
+  
+  // INC GPR
+  def INCr : F1<0xE6, (outs), (ins GPR:$dst),
+                "INC\t$dst", []> {
+    let Defs = [SR];
+  }
+  
+  // DEC GPR
+  def DECr : F1<0xC6, (outs), (ins GPR:$dst),
+                "DEC\t$dst", []> {
+    let Defs = [SR];
+  }
+  
+  // ASL GPR
+  def ASLr : F1<0x06, (outs), (ins GPR:$dst),
+                "ASL\t$dst", []> {
+    let Defs = [SR];
+  }
+  
+  // LSR GPR
+  def LSRr : F1<0x46, (outs), (ins GPR:$dst),
+                "LSR\t$dst", []> {
+    let Defs = [SR];
+  }
+  
+  // ROL GPR
+  def ROLr : F1<0x26, (outs), (ins GPR:$dst),
+                "ROL\t$dst", []> {
+    let Defs = [SR];
+    let Uses = [SR];
+  }
+  
+  // ROR GPR
+  def RORr : F1<0x66, (outs), (ins GPR:$dst),
+                "ROR\t$dst", []> {
+    let Defs = [SR];
+    let Uses = [SR];
+  }
+  
+  // STZ GPR
+  def STZr : F1<0x64, (outs), (ins GPR:$dst),
+                "STZ\t$dst", []>;
+  
+  // Indirect register addressing: LDA (Rn) - load from address in Rn
+  def LDA_IND_r : F1<0xB2, (outs ACC:$dst), (ins GPRInd:$ptr),
+                     "LDA\t$ptr", []>;
+  
+  // Indirect register addressing: STA (Rn) - store to address in Rn
+  def STA_IND_r : F1<0x92, (outs), (ins ACC:$src, GPRInd:$ptr),
+                     "STA\t$ptr", []>;
+  
+  // Indirect register addressing: ADC (Rn) - add from address in Rn
+  def ADC_IND_r : F1<0x72, (outs ACC:$dst), (ins ACC:$src1, GPRInd:$ptr),
+                     "ADC\t$ptr", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+    let Uses = [SR];
+  }
+  
+  // Indirect register Y-indexed: LDA (Rn),Y
+  def LDA_IND_Y_r : F1<0xB1, (outs ACC:$dst), (ins GPRIndY:$ptr),
+                       "LDA\t$ptr", []> {
+    let Uses = [Y];
+  }
+  
+  // Indirect register Y-indexed: STA (Rn),Y
+  def STA_IND_Y_r : F1<0x91, (outs), (ins ACC:$src, GPRIndY:$ptr),
+                       "STA\t$ptr", []> {
+    let Uses = [Y];
+  }
+  
+  // Indirect register Y-indexed: ADC (Rn),Y
+  def ADC_IND_Y_r : F1<0x71, (outs ACC:$dst), (ins ACC:$src1, GPRIndY:$ptr),
+                       "ADC\t$ptr", []> {
+    let Constraints = "$src1 = $dst";
+    let Defs = [SR];
+    let Uses = [SR, Y];
+  }
 }
 
 //===----------------------------------------------------------------------===//

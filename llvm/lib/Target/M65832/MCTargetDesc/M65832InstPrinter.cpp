@@ -63,16 +63,26 @@ void M65832InstPrinter::printInst(const MCInst *MI, uint64_t Address,
 
 void M65832InstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
                                        raw_ostream &O) {
+  if (OpNo >= MI->getNumOperands()) {
+    O << "<?>";
+    return;
+  }
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isReg()) {
-    printRegName(O, Op.getReg());
+    // Print register name (R0, R1, ..., A, X, Y, etc.)
+    if (Op.getReg() == 0) {
+      O << "<noreg>";
+    } else {
+      printRegName(O, Op.getReg());
+    }
   } else if (Op.isImm()) {
     // Print immediate value (# prefix is in assembly string if needed)
     printHexImm(O, Op.getImm());
   } else if (Op.isExpr()) {
     MAI.printExpr(O, *Op.getExpr());
   } else {
-    llvm_unreachable("Unknown operand");
+    // Unknown operand type
+    O << "<?op>";
   }
 }
 
@@ -180,4 +190,34 @@ void M65832InstPrinter::printCondCode(const MCInst *MI, unsigned OpNo,
     default: O << "??"; break;
     }
   }
+}
+
+void M65832InstPrinter::printIndirectOperand(const MCInst *MI, unsigned OpNo,
+                                              raw_ostream &O) {
+  // Print as (Rn) for indirect register addressing
+  const MCOperand &Op = MI->getOperand(OpNo);
+  O << '(';
+  if (Op.isReg()) {
+    printRegName(O, Op.getReg());
+  } else if (Op.isImm()) {
+    O << '$' << format_hex_no_prefix(Op.getImm() & 0xFF, 2);
+  } else if (Op.isExpr()) {
+    MAI.printExpr(O, *Op.getExpr());
+  }
+  O << ')';
+}
+
+void M65832InstPrinter::printIndirectYOperand(const MCInst *MI, unsigned OpNo,
+                                               raw_ostream &O) {
+  // Print as (Rn),Y for indirect Y-indexed addressing
+  const MCOperand &Op = MI->getOperand(OpNo);
+  O << '(';
+  if (Op.isReg()) {
+    printRegName(O, Op.getReg());
+  } else if (Op.isImm()) {
+    O << '$' << format_hex_no_prefix(Op.getImm() & 0xFF, 2);
+  } else if (Op.isExpr()) {
+    MAI.printExpr(O, *Op.getExpr());
+  }
+  O << "),Y";
 }

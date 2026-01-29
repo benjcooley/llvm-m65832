@@ -30,6 +30,8 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/CodeGen/Register.h"
+#include "llvm/MC/MCRegister.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
@@ -93,14 +95,39 @@ bool M65832AsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
   if (ExtraCode && ExtraCode[0])
     return true; // Unknown modifier
 
+  // Bounds check
+  if (OpNo >= MI->getNumOperands())
+    return true;
+    
   const MachineOperand &MO = MI->getOperand(OpNo);
   
+  // Memory operand is a register containing the address
   if (MO.isReg()) {
-    // Direct page addressing: $XX
-    OS << '$' << format_hex_no_prefix(MO.getReg() * 4, 2);
+    Register Reg = MO.getReg();
+    // Check if valid register (non-zero ID)
+    if (Reg.id() != 0) {
+      OS << M65832InstPrinter::getRegisterName(Reg);
+      return false;
+    }
+    // NoReg - shouldn't happen, but handle gracefully
+    OS << "R0";
     return false;
   }
   
+  if (MO.isGlobal()) {
+    // Global address - print as B+symbol
+    OS << "B+";
+    PrintSymbolOperand(MO, OS);
+    return false;
+  }
+  
+  if (MO.isImm()) {
+    // Immediate address - print as hex
+    OS << '$' << format_hex_no_prefix(MO.getImm(), 8);
+    return false;
+  }
+  
+  // Unknown operand type
   return true;
 }
 

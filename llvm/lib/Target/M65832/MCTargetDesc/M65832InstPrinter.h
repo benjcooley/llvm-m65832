@@ -45,6 +45,8 @@ public:
   void printCondCode(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printAbsAddr(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printBankRelAddr(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+  void printIndirectOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+  void printIndirectYOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
 };
 
 } // namespace llvm
