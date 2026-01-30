@@ -230,6 +230,10 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::PLP:       return 0x28;
   case M65832::PHB:       return 0x8B;
   case M65832::PLB:       return 0xAB;
+  case M65832::PHD32:     return 0x70;
+  case M65832::PLD32:     return 0x71;
+  case M65832::PHB32:     return 0x72;
+  case M65832::PLB32:     return 0x73;
   
   // Misc
   case M65832::NOP:       return 0xEA;
@@ -442,6 +446,10 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   case M65832::FENCE:
   case M65832::FENCER:
   case M65832::FENCEW:
+  case M65832::PHD32:
+  case M65832::PLD32:
+  case M65832::PHB32:
+  case M65832::PLB32:
   case M65832::TAB:
   case M65832::TBA:
   case M65832::TXB:
@@ -459,6 +467,22 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
     // SB dp - Set B from direct page (3 bytes: $02 $23 dp)
     emitByte(EXT_PREFIX, CB);
     emitByte(Opcode, CB);
+    const MCOperand &MO = MI.getOperand(0);
+    emitDPOp(MO, 2);
+    return;
+  }
+  case M65832::JMP_DP_IND: {
+    // JMP (dp) - Jump indirect through DP (3 bytes: $02 $A5 dp)
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xA5, CB);
+    const MCOperand &MO = MI.getOperand(0);
+    emitDPOp(MO, 2);
+    return;
+  }
+  case M65832::JSR_DP_IND: {
+    // JSR (dp) - Call indirect through DP (3 bytes: $02 $A6 dp)
+    emitByte(EXT_PREFIX, CB);
+    emitByte(0xA6, CB);
     const MCOperand &MO = MI.getOperand(0);
     emitDPOp(MO, 2);
     return;

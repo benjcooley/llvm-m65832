@@ -54,7 +54,7 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
   uint64_t StackSize = MFI.getStackSize();
 
   // Save B register (B is the frame pointer in M65832)
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::PHB));
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::PHB32));
 
   // Allocate stack frame if needed
   if (StackSize != 0) {
@@ -108,7 +108,7 @@ void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
   }
 
   // Restore B register (frame pointer) before RTS
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::PLB));
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::PLB32));
 }
 
 MachineBasicBlock::iterator M65832FrameLowering::eliminateCallFramePseudoInstr(

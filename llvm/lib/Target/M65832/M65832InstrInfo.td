@@ -152,6 +152,21 @@ def GPRIndY : Operand<i32> {
   let ParserMatchClass = M65832IndirectRegYAsmOperand;
 }
 
+// Parser match class for indirect DP operands (dp) - for JSR/JMP (dp)
+def M65832IndirectDPAsmOperand : AsmOperandClass {
+  let Name = "IndirectDP";
+  let RenderMethod = "addMemOperands";
+  let PredicateMethod = "isIndirectDP";
+}
+
+// Indirect DP operand - prints as (dp) for indirect JSR/JMP through DP
+def DPIndOp : Operand<i32> {
+  let PrintMethod = "printIndirectDPOperand";
+  let EncoderMethod = "getDPOpValue";
+  let DecoderMethod = "decodeDPOperand";
+  let ParserMatchClass = M65832IndirectDPAsmOperand;
+}
+
 // Direct Page operand (register number * 4)
 def DPOp : Operand<i32> {
   let PrintMethod = "printDPOperand";
@@ -190,10 +205,9 @@ def brtarget : Operand<OtherVT> {
   let ParserMatchClass = M65832MemAsmOperand;
 }
 
-// Call target (for JSR) - 32-bit absolute address in 32-bit mode
+// Call target (for JSR) - 32-bit absolute operand
 def calltarget : Operand<i32> {
   let PrintMethod = "printAbsAddr";
-  let EncoderMethod = "getCallTargetOpValue";
   let ParserMatchClass = M65832MemAsmOperand;
 }
 
@@ -1310,8 +1324,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
 //===----------------------------------------------------------------------===//
 
 let isCall = 1 in {
-  // JSR in 32-bit mode: opcode 0x20 + 32-bit absolute address (5 bytes total)
-  // The hardware adds B register to the address at runtime
+  // JSR: opcode 0x20 + 32-bit absolute operand (5 bytes total)
   def JSR : F8<0x20, (outs), (ins calltarget:$target),
               "JSR\t$target",
               [(M65832call tglobaladdr:$target)]> {
@@ -1351,10 +1364,10 @@ def : Pat<(M65832call texternalsym:$target), (JSR texternalsym:$target)>;
 def : Pat<(M65832call GPR:$target), (JSR_IND GPR:$target)>;
 
 // JSR indirect through DP address (for function pointers)
-// Opcode $FC dp - JSR (dp) where dp holds the 32-bit target address
-let isCall = 1, isCodeGenOnly = 1 in
-def JSR_DP_IND : F1<0xFC, (outs), (ins DPOp:$target),
-                    "JSR\t($target)", []> {
+// Extended encoding: $02 $A6 dp - JSR (dp) where dp holds the 32-bit target address
+let isCall = 1 in
+def JSR_DP_IND : F7_DP<0xA6, (outs), (ins DPIndOp:$target),
+                       "JSR\t$target", []> {
   // Caller-saved GPRs and FPU registers
   let Defs = [SP, R0, R1, R2, R3, R4, R5, R6, R7,
               R8, R9, R10, R11, R12, R13, R14, R15, R30,
@@ -1365,6 +1378,12 @@ def JSR_DP_IND : F1<0xFC, (outs), (ins DPOp:$target),
               F8, F9, F10, F11, F12, F13];
   let Uses = [SP];
 }
+
+// JMP indirect through DP address
+// Extended encoding: $02 $A5 dp - JMP (dp) where dp holds the 32-bit target address
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in
+def JMP_DP_IND : F7_DP<0xA5, (outs), (ins DPIndOp:$target),
+                       "JMP\t$target", []>;
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RTS : F0<0x60, (outs), (ins), "RTS", [(M65832retflag)]> {
@@ -1418,9 +1437,7 @@ def PLY : F0<0x7A, (outs), (ins), "PLY", []> {
   let mayLoad = 1;
 }
 
-// Push/Pull B register (needed for JSR/RTS with B-relative addressing in 32-bit mode)
-// In 32-bit mode, PHB pushes 32-bit B, PLB pulls 32-bit B
-// Standard 65816 opcodes: PHB=0x8B, PLB=0xAB
+// Push/Pull B register (legacy 65816 opcodes)
 def PHB : F0<0x8B, (outs), (ins), "PHB", []> {
   let Defs = [SP];
   let Uses = [SP, B];
@@ -1429,6 +1446,31 @@ def PHB : F0<0x8B, (outs), (ins), "PHB", []> {
 
 def PLB : F0<0xAB, (outs), (ins), "PLB", []> {
   let Defs = [SP, B];
+  let Uses = [SP];
+  let mayLoad = 1;
+}
+
+// Explicit 32-bit stack ops (extended prefix)
+def PHD32 : F7_Imp<0x70, (outs), (ins), "PHD32", []> {
+  let Defs = [SP];
+  let Uses = [SP, D];
+  let mayStore = 1;
+}
+
+def PLD32 : F7_Imp<0x71, (outs), (ins), "PLD32", []> {
+  let Defs = [SP, SR];
+  let Uses = [SP];
+  let mayLoad = 1;
+}
+
+def PHB32 : F7_Imp<0x72, (outs), (ins), "PHB32", []> {
+  let Defs = [SP];
+  let Uses = [SP, B];
+  let mayStore = 1;
+}
+
+def PLB32 : F7_Imp<0x73, (outs), (ins), "PLB32", []> {
+  let Defs = [SP, SR];
   let Uses = [SP];
   let mayLoad = 1;
 }

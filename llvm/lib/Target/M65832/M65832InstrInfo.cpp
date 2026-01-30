@@ -1065,10 +1065,8 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
           .addReg(BaseReg);
     } else if (BaseReg == M65832::B) {
       // B register: compute effective address B+Offset into R0
-      // The frame base was saved to R30's DP slot during prologue (STA R30; SB R30)
-      // Load frame base from R30 slot, add offset, store to R0 for indirect load
-      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A)
-          .addImm(getDPOffset(30)); // R30 contains frame base
+      // Use TBA to read B directly (frame base now stored in B)
+      BuildMI(MBB, MI, DL, get(M65832::TBA), M65832::A);
       if (Offset != 0) {
         BuildMI(MBB, MI, DL, get(M65832::CLC));
         BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
@@ -1154,9 +1152,8 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
           .addReg(BaseReg);
     } else if (BaseReg == M65832::B) {
       // B register: compute effective address B+Offset into R0
-      // The frame base was saved to R30's DP slot during prologue (STA R30; SB R30)
-      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A)
-          .addImm(getDPOffset(30)); // R30 contains frame base
+      // Use TBA to read B directly (frame base now stored in B)
+      BuildMI(MBB, MI, DL, get(M65832::TBA), M65832::A);
       if (Offset != 0) {
         BuildMI(MBB, MI, DL, get(M65832::CLC));
         BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
