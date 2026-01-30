@@ -1117,6 +1117,18 @@ def TYA : F0<0x98, (outs ACC:$dst), (ins), "TYA", []> { let Defs = [SR]; let Use
 def TSX : F0<0xBA, (outs XREG:$dst), (ins), "TSX", []> { let Defs = [SR]; let Uses = [SP]; }
 def TXS : F0<0x9A, (outs), (ins XREG:$src), "TXS", []> { let Defs = [SP]; }
 
+// Extended B register transfers ($02 prefix)
+// TAB: Transfer A to B (opcode $02 $91)
+def TAB : F7_Imp<0x91, (outs), (ins ACC:$src), "TAB", []> {
+  let Uses = [A];
+  let Defs = [B];
+}
+// TBA: Transfer B to A (opcode $02 $92)
+def TBA : F7_Imp<0x92, (outs ACC:$dst), (ins), "TBA", []> {
+  let Uses = [B];
+  let Defs = [A, SR];
+}
+
 // Increment/Decrement X and Y registers
 def INX : F0<0xE8, (outs), (ins), "INX", []> { let Defs = [SR, X]; let Uses = [X]; }
 def INY : F0<0xC8, (outs), (ins), "INY", []> { let Defs = [SR, Y]; let Uses = [Y]; }

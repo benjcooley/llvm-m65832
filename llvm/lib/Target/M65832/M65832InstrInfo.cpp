@@ -458,10 +458,9 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
           .addReg(M65832::A, RegState::Kill)
           .addImm(DstDP);
     } else if (FrameReg == M65832::B) {
-      // For B-relative: Load B from R30 DP slot (where prologue saved it)
-      // LDA $78 (R30); CLC; ADC #offset; STA dst
-      unsigned R30DP = getDPOffset(30);  // R30's DP slot stores B
-      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(R30DP);
+      // For B-relative: Use TBA to transfer B to A directly
+      // TBA; CLC; ADC #offset; STA dst
+      BuildMI(MBB, MI, DL, get(M65832::TBA), M65832::A);
       if (Offset != 0) {
         BuildMI(MBB, MI, DL, get(M65832::CLC));
         BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)

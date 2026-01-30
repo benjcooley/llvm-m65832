@@ -56,14 +56,6 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
   // Save B register (B is the frame pointer in M65832)
   BuildMI(MBB, MBBI, DL, TII.get(M65832::PHB));
 
-  // Save R30 (frame pointer cache) - must save before we modify it
-  // This is done manually rather than via CSR because we need to save
-  // the incoming value BEFORE the prologue sets R30 to the frame pointer
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::LDA_DP), M65832::A)
-      .addImm(M65832InstrInfo::getDPOffset(30));
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::PHA))
-      .addReg(M65832::A);
-
   // Allocate stack frame if needed
   if (StackSize != 0) {
     // Adjust stack pointer: SP = SP - StackSize
@@ -82,18 +74,12 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
   }
 
   // Set B = SP (frame base for B+offset addressing of locals)
-  // Also set R30 = SP since the register allocator may use R30 for frame arithmetic
-  // Note: R30 is callee-saved, so it will be spilled/restored automatically
+  // Use TAB instruction to transfer A to B directly
   BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
   BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
       .addReg(M65832::X);
-  // Store SP to R30 (frame pointer copy for register allocator)
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::STA_DP))
-      .addReg(M65832::A)
-      .addImm(M65832InstrInfo::getDPOffset(30));
-  // Set B from R30
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::SB_DP))
-      .addImm(M65832InstrInfo::getDPOffset(30));
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::TAB))
+      .addReg(M65832::A);
 }
 
 void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
@@ -124,12 +110,6 @@ void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
     BuildMI(MBB, MBBI, DL, TII.get(M65832::TXS))
         .addReg(M65832::X);
   }
-  
-  // Restore R30 (frame pointer cache) - paired with save in prologue
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::PLA), M65832::A);
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::STA_DP))
-      .addReg(M65832::A)
-      .addImm(M65832InstrInfo::getDPOffset(30));
 
   // Restore B register (frame pointer) before RTS
   BuildMI(MBB, MBBI, DL, TII.get(M65832::PLB));
