@@ -250,6 +250,11 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::FENCEW:    return 0x52;
   case M65832::TAB:       return 0x91;
   case M65832::TBA:       return 0x92;
+  case M65832::TXB:       return 0x93;
+  case M65832::TBX:       return 0x94;
+  case M65832::TYB:       return 0x95;
+  case M65832::TBY:       return 0x96;
+  case M65832::TSPB:      return 0xA4;
   case M65832::TTA:       return 0x9A;
   case M65832::TAT:       return 0x9B;
   
@@ -439,6 +444,11 @@ void M65832MCCodeEmitter::encodeInstruction(const MCInst &MI,
   case M65832::FENCEW:
   case M65832::TAB:
   case M65832::TBA:
+  case M65832::TXB:
+  case M65832::TBX:
+  case M65832::TYB:
+  case M65832::TBY:
+  case M65832::TSPB:
   case M65832::TTA:
   case M65832::TAT: {
     emitByte(EXT_PREFIX, CB);

@@ -1128,6 +1128,31 @@ def TBA : F7_Imp<0x92, (outs ACC:$dst), (ins), "TBA", []> {
   let Uses = [B];
   let Defs = [A, SR];
 }
+// TXB: Transfer X to B (opcode $02 $93)
+def TXB : F7_Imp<0x93, (outs), (ins XREG:$src), "TXB", []> {
+  let Uses = [X];
+  let Defs = [B];
+}
+// TBX: Transfer B to X (opcode $02 $94)
+def TBX : F7_Imp<0x94, (outs XREG:$dst), (ins), "TBX", []> {
+  let Uses = [B];
+  let Defs = [X, SR];
+}
+// TYB: Transfer Y to B (opcode $02 $95)
+def TYB : F7_Imp<0x95, (outs), (ins), "TYB", []> {
+  let Uses = [Y];
+  let Defs = [B];
+}
+// TBY: Transfer B to Y (opcode $02 $96)
+def TBY : F7_Imp<0x96, (outs), (ins), "TBY", []> {
+  let Uses = [B];
+  let Defs = [Y, SR];
+}
+// TSPB: Transfer SP to B (opcode $02 $A4) - perfect for frame pointer setup
+def TSPB : F7_Imp<0xA4, (outs), (ins), "TSPB", []> {
+  let Uses = [SP];
+  let Defs = [B];
+}
 
 // Increment/Decrement X and Y registers
 def INX : F0<0xE8, (outs), (ins), "INX", []> { let Defs = [SR, X]; let Uses = [X]; }

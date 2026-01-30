@@ -74,12 +74,8 @@ void M65832FrameLowering::emitPrologue(MachineFunction &MF,
   }
 
   // Set B = SP (frame base for B+offset addressing of locals)
-  // Use TAB instruction to transfer A to B directly
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
-      .addReg(M65832::X);
-  BuildMI(MBB, MBBI, DL, TII.get(M65832::TAB))
-      .addReg(M65832::A);
+  // Use TSPB instruction to transfer SP to B directly
+  BuildMI(MBB, MBBI, DL, TII.get(M65832::TSPB));
 }
 
 void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
