@@ -13,8 +13,9 @@
 //   FPU Arguments:      F0-F7 (first 8), then stack (when FPU available)
 //   FPU Return:         F0 (when FPU available)
 //
-//   Caller-saved: R0-R15, R30, R32-R47, A, X, Y, F0-F13
+//   Caller-saved: R0-R15, R32-R47, A, X, Y, F0-F13
 //   Callee-saved: R16-R23, R48-R55, R29, F14-F15
+//   Special:      R30 (frame pointer cache - manually saved in prologue)
 //   Reserved:     R24-R28, R31, R56-R63, SP, D, B, VBR, T
 //
 //   Stack grows downward, 4-byte alignment minimum.
@@ -80,10 +81,12 @@ def CC_M65832 : CallingConv<[
 //===----------------------------------------------------------------------===//
 
 // Standard callee-saved registers (hard-float ABI)
+// Note: R30 is manually saved/restored in prologue/epilogue before it's used
+// as the frame pointer cache, so it's not in this list.
 def CSR_M65832 : CalleeSavedRegs<(add
   R16, R17, R18, R19, R20, R21, R22, R23,   // Primary callee-saved GPRs
   R48, R49, R50, R51, R52, R53, R54, R55,   // Extended callee-saved GPRs
-  R29,                                       // Frame pointer
+  R29,                                       // Frame pointer (reserved)
   F14, F15                                   // Callee-saved FPU registers
 )>;
 
