@@ -221,3 +221,29 @@ void M65832InstPrinter::printIndirectYOperand(const MCInst *MI, unsigned OpNo,
   }
   O << "),Y";
 }
+
+void M65832InstPrinter::printIndirectDPOperand(const MCInst *MI, unsigned OpNo,
+                                                raw_ostream &O) {
+  // Print as (Rn) or ($dp) for indirect DP addressing (JSR/JMP (dp))
+  const MCOperand &Op = MI->getOperand(OpNo);
+  O << '(';
+  if (Op.isReg()) {
+    printRegName(O, Op.getReg());
+  } else if (Op.isImm()) {
+    // Direct Page address - check if it maps to a register (R0-R63)
+    int64_t Addr = Op.getImm() & 0xFF;
+    if ((Addr & 0x3) == 0 && Addr < 256) {
+      unsigned RegNum = Addr / 4;
+      if (RegNum < 64) {
+        O << 'R' << RegNum;
+      } else {
+        O << '$' << format_hex_no_prefix(Addr, 2);
+      }
+    } else {
+      O << '$' << format_hex_no_prefix(Addr, 2);
+    }
+  } else if (Op.isExpr()) {
+    MAI.printExpr(O, *Op.getExpr());
+  }
+  O << ')';
+}

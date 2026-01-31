@@ -150,6 +150,14 @@ public:
     // Must have BaseReg set, be indirect, with Y index
     return Mem.BaseReg != 0 && Mem.Indirect && Mem.IndexReg == M65832::Y;
   }
+  
+  // Check if this is indirect DP addressing (dp) or (Rn) - for JSR/JMP (dp)
+  bool isIndirectDP() const {
+    if (Kind != k_Memory)
+      return false;
+    // Indirect addressing with no Y index - either (Rn) or ($dp)
+    return Mem.Indirect && Mem.IndexReg == 0;
+  }
 
   StringRef getToken() const {
     assert(Kind == k_Token && "Not a token");
