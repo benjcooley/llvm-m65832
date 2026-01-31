@@ -90,22 +90,121 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
     if (selectFrameIndex(N))
       return;
     break;
+  case ISD::OR:
+    // Disjoint OR is equivalent to ADD; prefer ADD for pointer arithmetic.
+    if (N->getFlags().hasDisjoint() && N->getValueType(0) == MVT::i32) {
+      SDLoc DL(N);
+      SDValue Add = CurDAG->getNode(ISD::ADD, DL, N->getValueType(0),
+                                    N->getOperand(0), N->getOperand(1));
+      ReplaceNode(N, Add.getNode());
+      return;
+    }
+    break;
   }
 
   // Select the default instruction
   SelectCode(N);
 }
 
+/// Check if a node is used as the ADDRESS operand of a memory operation.
+/// For loads, the address is operand 1. For stores, the address is operand 2.
+/// Returns true only if N is used as an address, not as a value being stored.
+static bool isUsedAsMemoryAddress(SDNode *N, SDNode *User) {
+  // Check for SelectionDAG load nodes - address is operand 1
+  if (auto *Load = dyn_cast<LoadSDNode>(User)) {
+    return Load->getBasePtr().getNode() == N;
+  }
+
+  // Check for SelectionDAG store nodes - address is operand 2 (value is operand 1)
+  if (auto *Store = dyn_cast<StoreSDNode>(User)) {
+    return Store->getBasePtr().getNode() == N;
+  }
+
+  // Check for already-selected machine memory instructions
+  if (User->isMachineOpcode()) {
+    unsigned Opc = User->getMachineOpcode();
+    if (Opc == M65832::LOAD8 || Opc == M65832::LOAD16 || Opc == M65832::LOAD32 ||
+        Opc == M65832::LOAD8_GLOBAL || Opc == M65832::LOAD16_GLOBAL ||
+        Opc == M65832::LOAD32_GLOBAL || Opc == M65832::LDF32 ||
+        Opc == M65832::LDF64) {
+      return true;
+    }
+    if (Opc == M65832::STORE8 || Opc == M65832::STORE16 ||
+        Opc == M65832::STORE32 || Opc == M65832::STORE8_GLOBAL ||
+        Opc == M65832::STORE16_GLOBAL || Opc == M65832::STORE32_GLOBAL ||
+        Opc == M65832::STF32 || Opc == M65832::STF64) {
+      if (User->getNumOperands() > 0 && User->getOperand(0).getNode() == N)
+        return false;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/// Check if a user node should be treated as a memory use of a frame index.
+/// This includes direct load/store users (where the FI is the address) and
+/// ADD nodes that feed only memory addresses.
+static bool isMemoryUser(SDNode *N, SDNode *User) {
+  if (isUsedAsMemoryAddress(N, User))
+    return true;
+
+  if (User->getOpcode() != ISD::ADD)
+    return false;
+
+  for (SDNode::use_iterator AUI = User->use_begin(), AUE = User->use_end();
+       AUI != AUE; ++AUI) {
+    SDNode *AddUser = AUI->getUser();
+    if (!isUsedAsMemoryAddress(User, AddUser))
+      return false;
+  }
+  return true;
+}
+
 bool M65832DAGToDAGISel::selectFrameIndex(SDNode *N) {
+  bool HasMemUsers = false;
+  SmallVector<SDNode *, 4> NonMemUsers;
+
+  for (SDNode::use_iterator UI = N->use_begin(), UE = N->use_end();
+       UI != UE; ++UI) {
+    SDNode *User = UI->getUser();
+    if (isMemoryUser(N, User)) {
+      HasMemUsers = true;
+      continue;
+    }
+    NonMemUsers.push_back(User);
+  }
+
+  // If all uses are memory-related, keep the frame index for selectAddr.
+  if (HasMemUsers && NonMemUsers.empty()) {
+    LLVM_DEBUG(dbgs() << "selectFrameIndex: FI used by memory ops, skipping LEA_FI\n");
+    return false;
+  }
+
   SDLoc DL(N);
   int FI = cast<FrameIndexSDNode>(N)->getIndex();
   SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i32);
   SDValue Zero = CurDAG->getTargetConstant(0, DL, MVT::i32);
-  
-  // Use LEA_FI pseudo to load address from frame index
-  // This will be handled by eliminateFrameIndex which replaces FI with SP+offset
-  ReplaceNode(N, CurDAG->getMachineNode(M65832::LEA_FI, DL, MVT::i32, TFI, Zero));
-  return true;
+  SDValue Addr = SDValue(
+      CurDAG->getMachineNode(M65832::LEA_FI, DL, MVT::i32, TFI, Zero), 0);
+
+  if (!HasMemUsers) {
+    LLVM_DEBUG(dbgs() << "selectFrameIndex: FI used as value, emitting LEA_FI\n");
+    ReplaceNode(N, Addr.getNode());
+    return true;
+  }
+
+  // Mixed uses: keep FI for memory ops, but materialize LEA_FI for non-memory uses.
+  for (SDNode *User : NonMemUsers) {
+    SmallVector<SDValue, 8> Ops;
+    Ops.reserve(User->getNumOperands());
+    for (unsigned i = 0, e = User->getNumOperands(); i != e; ++i) {
+      SDValue Op = User->getOperand(i);
+      Ops.push_back(Op.getNode() == N ? Addr : Op);
+    }
+    CurDAG->UpdateNodeOperands(User, Ops);
+  }
+  return false;
 }
 
 bool M65832DAGToDAGISel::selectAddr(SDValue N, SDValue &Base, SDValue &Offset) {
@@ -116,11 +215,32 @@ bool M65832DAGToDAGISel::selectAddr(SDValue N, SDValue &Base, SDValue &Offset) {
     return true;
   }
 
-  if (N.getOpcode() == ISD::ADD) {
-    if (ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-      Base = N.getOperand(0);
-      Offset = CurDAG->getTargetConstant(CN->getZExtValue(), SDLoc(N), MVT::i32);
-      return true;
+  auto SelectBaseOffset = [&](SDValue BaseOp, SDValue OffsetOp) {
+    if (BaseOp.getOpcode() == ISD::FrameIndex) {
+      Base = CurDAG->getTargetFrameIndex(
+          cast<FrameIndexSDNode>(BaseOp)->getIndex(), MVT::i32);
+    } else {
+      Base = BaseOp;
+    }
+    Offset = OffsetOp;
+    return true;
+  };
+
+  auto SelectConstOffset = [&](SDValue BaseOp, ConstantSDNode *CN) {
+    return SelectBaseOffset(
+        BaseOp, CurDAG->getTargetConstant(CN->getZExtValue(), SDLoc(N),
+                                          MVT::i32));
+  };
+
+  if (N.getOpcode() == ISD::ADD || N.getOpcode() == ISD::OR) {
+    SDValue LHS = N.getOperand(0);
+    SDValue RHS = N.getOperand(1);
+
+    if (ConstantSDNode *CN = dyn_cast<ConstantSDNode>(RHS)) {
+      return SelectConstOffset(LHS, CN);
+    }
+    if (ConstantSDNode *CN = dyn_cast<ConstantSDNode>(LHS)) {
+      return SelectConstOffset(RHS, CN);
     }
   }
 
