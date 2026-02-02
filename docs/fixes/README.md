@@ -11,6 +11,8 @@ This directory contains documentation for all fixes applied to the M65832 LLVM b
 | 2026-01-31 | disjoint OR in vsprintf | Treat disjoint OR as ADD for pointer arithmetic | stdio O2 hang | [2026-01-31-disjoint-or-vsprintf.md](2026-01-31-disjoint-or-vsprintf.md) |
 | 2026-01-31 | memmove OR address | Accept OR(FrameIndex, const) in selectAddr | memmove @<noreg> | [2026-01-31-memmove-or-addr.md](2026-01-31-memmove-or-addr.md) |
 | 2026-01-31 | frameindex base addr | Use TargetFrameIndex for base+offset | stdio O2 hang | [2026-01-31-frameindex-base-addr.md](2026-01-31-frameindex-base-addr.md) |
+| 2026-01-31 | STORE32 $noreg | Immediate store drops value in ISel | test_64bit_basic/divide (ongoing) | [2026-01-31-store32-noreg-isel.md](2026-01-31-store32-noreg-isel.md) |
+| 2026-01-30 | shift count 31 | Avoid reserved 0x1F immediate shift encoding | test_64bit (one << 63) | [2026-01-30-shift-imm-31.md](2026-01-30-shift-imm-31.md) |
 
 ### Code Generation Fixes
 
@@ -23,6 +25,7 @@ This directory contains documentation for all fixes applied to the M65832 LLVM b
 | Date | Issue | Description | Tests Fixed | File |
 |------|-------|-------------|-------------|------|
 | _Example_ | strtol overflow | Incorrect handling of MAX_INT | strtol edge cases | [YYYY-MM-DD-fix-description.md](YYYY-MM-DD-fix-description.md) |
+| 2026-02-01 | 64-bit udiv/umod | Fix __udivdi3/__umoddi3 runtime path | test_64bit_divide | [2026-02-01-udivmod64-runtime.md](2026-02-01-udivmod64-runtime.md) |
 
 ## Statistics
 

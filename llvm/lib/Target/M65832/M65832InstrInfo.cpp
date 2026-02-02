@@ -40,6 +40,26 @@ void M65832InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    bool RenamableDest, bool RenamableSrc) const {
   // For GPR to GPR copy, we use: LDA src_dp; STA dst_dp
   // This goes through the accumulator A
+
+  if (!SrcReg) {
+    // Treat copies from NoRegister as zero initialization.
+    if (M65832::GPRRegClass.contains(DestReg)) {
+      BuildMI(MBB, I, DL, get(M65832::LDR_IMM), DestReg).addImm(0);
+      return;
+    }
+    if (DestReg == M65832::A) {
+      BuildMI(MBB, I, DL, get(M65832::LDA_IMM), M65832::A).addImm(0);
+      return;
+    }
+    if (DestReg == M65832::X) {
+      BuildMI(MBB, I, DL, get(M65832::LDX_IMM), M65832::X).addImm(0);
+      return;
+    }
+    if (DestReg == M65832::Y) {
+      BuildMI(MBB, I, DL, get(M65832::LDY_IMM), M65832::Y).addImm(0);
+      return;
+    }
+  }
   
   if (M65832::GPRRegClass.contains(DestReg) &&
       M65832::GPRRegClass.contains(SrcReg)) {
@@ -530,6 +550,45 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     break;
   }
 
+  case M65832::SUBC_GPR: {
+    // SUBC: dst = src1 - src2 (sets carry/borrow) using A
+    Register DstReg = MI.getOperand(0).getReg();
+    Register Src1Reg = MI.getOperand(1).getReg();
+    Register Src2Reg = MI.getOperand(2).getReg();
+    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+    BuildMI(MBB, MI, DL, get(M65832::SEC));
+    BuildMI(MBB, MI, DL, get(M65832::SBC_DP), M65832::A)
+        .addReg(M65832::A)
+        .addImm(Src2DP);
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
+  case M65832::SUBE_GPR: {
+    // SUBE: dst = src1 - src2 with borrow-in (uses carry) using A
+    Register DstReg = MI.getOperand(0).getReg();
+    Register Src1Reg = MI.getOperand(1).getReg();
+    Register Src2Reg = MI.getOperand(2).getReg();
+    unsigned Src1DP = getDPOffset(Src1Reg - M65832::R0);
+    unsigned Src2DP = getDPOffset(Src2Reg - M65832::R0);
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(Src1DP);
+    BuildMI(MBB, MI, DL, get(M65832::SBC_DP), M65832::A)
+        .addReg(M65832::A)
+        .addImm(Src2DP);
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
   case M65832::AND_GPR: {
     // AND: LDA src1; AND src2; STA dst
     Register DstReg = MI.getOperand(0).getReg();
@@ -779,6 +838,58 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
         BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
         BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
         // Always add (Offset + 4) to compensate for PHA
+        int64_t AdjustedOffset = Offset + 4;
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(AdjustedOffset);
+        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
+        BuildMI(MBB, MI, DL, get(M65832::PLA), M65832::A);
+        BuildMI(MBB, MI, DL, get(M65832::STA_ABS_X))
+            .addReg(M65832::A, RegState::Kill)
+            .addImm(0)
+            .addReg(M65832::X);
+      } else {
+        // Use frame pointer
+        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+        BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
+            .addReg(M65832::A, RegState::Kill)
+            .addImm(BaseDP);
+      }
+    } else {
+      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(BaseDP);
+    }
+    break;
+  }
+
+  case M65832::STORE32_IMM: {
+    // Store immediate to memory address: LDA #imm; STA (base+offset)
+    int64_t Imm = MI.getOperand(0).getImm();
+    Register BaseReg = MI.getOperand(1).getReg();
+    int64_t Offset = 0;
+    if (MI.getNumOperands() > 2 && MI.getOperand(2).isImm()) {
+      Offset = MI.getOperand(2).getImm();
+    }
+
+    BuildMI(MBB, MI, DL, get(M65832::LDA_IMM), M65832::A).addImm(Imm);
+
+    if (BaseReg == M65832::B) {
+      BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(Offset);
+    } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
+      unsigned BaseDP = getDPOffset(29);
+      if (BaseReg == M65832::SP) {
+        // Save A, compute address, store
+        // Note: PHA lowers SP by 4 (32-bit push), so we must add 4 to offset
+        // to compensate: effective_addr = (SP - 4) + (Offset + 4) = SP + Offset
+        BuildMI(MBB, MI, DL, get(M65832::PHA)).addReg(M65832::A);
+        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+        BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
         int64_t AdjustedOffset = Offset + 4;
         BuildMI(MBB, MI, DL, get(M65832::CLC));
         BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)

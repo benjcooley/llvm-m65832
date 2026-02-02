@@ -60,6 +60,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Support/DebugCounter.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
@@ -4227,9 +4228,13 @@ SDValue DAGCombiner::visitSUB(SDNode *N) {
     return NewSel;
 
   // fold (sub x, c) -> (add x, -c)
-  if (ConstantSDNode *N1C = getAsNonOpaqueConstant(N1))
+  if (ConstantSDNode *N1C = getAsNonOpaqueConstant(N1)) {
+    if (VT == MVT::i64 &&
+        TLI.getTargetMachine().getTargetTriple().getArch() == Triple::m65832)
+      return SDValue();
     return DAG.getNode(ISD::ADD, DL, VT, N0,
                        DAG.getConstant(-N1C->getAPIntValue(), DL, VT));
+  }
 
   if (isNullOrNullSplat(N0)) {
     // Right-shifting everything out but the sign bit followed by negation is

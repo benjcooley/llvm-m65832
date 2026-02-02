@@ -55,7 +55,7 @@ compile_test() {
         -o "$test_elf" \
         "$SYSROOT/lib/crt0.o" \
         "$test_obj" \
-        -L"$SYSROOT/lib" -lc -lsys 2>&1
+        -L"$SYSROOT/lib" -lc -lsys -lcompiler_rt 2>&1
     
     if [ $? -ne 0 ]; then
         return 1
@@ -118,10 +118,49 @@ echo "M65832 Stdlib Test Suite"
 echo "=========================================="
 echo ""
 
-# Run all tests in test directory
-if [ "$1" != "" ]; then
-    # Run specific test
-    run_test "$1" "$2"
+show_usage() {
+    echo "Usage: $0 [options] [pattern...]"
+    echo ""
+    echo "Options:"
+    echo "  -l, --list           List available tests and exit"
+    echo "  -h, --help           Show this help"
+    echo ""
+    echo "Patterns:"
+    echo "  One or more shell globs to match test file names."
+    echo "  Examples:"
+    echo "    $0 test_string*"
+    echo "    $0 test_stdlib.c"
+}
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_usage
+    exit 0
+fi
+
+if [ "$1" = "-l" ] || [ "$1" = "--list" ]; then
+    for test_file in "$SCRIPT_DIR"/test_*.c; do
+        [ -f "$test_file" ] && basename "$test_file"
+    done
+    exit 0
+fi
+
+run_matching_tests() {
+    local matched=0
+    for pattern in "$@"; do
+        for test_file in "$SCRIPT_DIR"/$pattern; do
+            if [ -f "$test_file" ]; then
+                run_test "$test_file" "0"
+                matched=1
+            fi
+        done
+    done
+    return $matched
+}
+
+if [ "$#" -gt 0 ]; then
+    if ! run_matching_tests "$@"; then
+        echo -e "${YELLOW}WARN${NC}: no tests matched patterns: $*"
+    fi
 else
     # Run all test_*.c files
     for test_file in "$SCRIPT_DIR"/test_*.c; do

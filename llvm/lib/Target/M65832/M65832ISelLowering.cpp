@@ -72,6 +72,12 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::AND, MVT::i32, Legal);
   setOperationAction(ISD::OR, MVT::i32, Legal);
   setOperationAction(ISD::XOR, MVT::i32, Legal);
+
+  // Carry/borrow ops (used by 64-bit legalization)
+  setOperationAction(ISD::SUBC, MVT::i32, Legal);
+  setOperationAction(ISD::SUBE, MVT::i32, Legal);
+
+
   
   // Shifts - now have hardware barrel shifter!
   setOperationAction(ISD::SHL, MVT::i32, Legal);
@@ -107,6 +113,11 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::MULHU, MVT::i32, Expand);
   setOperationAction(ISD::SMUL_LOHI, MVT::i32, Expand);
   setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
+  
+  // Multiply with overflow detection - custom lowering to handle correctly
+  // These are used by __builtin_mul_overflow and calloc overflow checking
+  setOperationAction(ISD::UMULO, MVT::i32, Custom);
+  setOperationAction(ISD::SMULO, MVT::i32, Custom);
   
   // Bit manipulation - now have hardware CLZ, CTZ, POPCNT!
   setOperationAction(ISD::CTLZ, MVT::i32, Legal);
@@ -315,9 +326,44 @@ SDValue M65832TargetLowering::LowerOperation(SDValue Op,
   case ISD::SRL_PARTS:        return LowerShiftRightParts(Op, DAG, false);
   case ISD::SRA_PARTS:        return LowerShiftRightParts(Op, DAG, true);
   case ISD::SELECT:           return LowerSELECT(Op, DAG);
+  case ISD::UMULO:            return LowerUMULO(Op, DAG);
+  case ISD::SMULO:            return LowerSMULO(Op, DAG);
   default:
     llvm_unreachable("unimplemented operation");
   }
+}
+
+SDValue M65832TargetLowering::PerformDAGCombine(SDNode *N,
+                                                DAGCombinerInfo &DCI) const {
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+
+  switch (N->getOpcode()) {
+  case ISD::ADD: {
+    if (N->getValueType(0) != MVT::i32)
+      break;
+    SDValue LHS = N->getOperand(0);
+    SDValue RHS = N->getOperand(1);
+    if (auto *C = dyn_cast<ConstantSDNode>(RHS)) {
+      int64_t ImmVal = C->getSExtValue();
+      if (ImmVal < 0) {
+        SDValue Imm = DAG.getConstant(-ImmVal, DL, MVT::i32);
+        return DAG.getNode(ISD::SUB, DL, MVT::i32, LHS, Imm);
+      }
+    } else if (auto *C = dyn_cast<ConstantSDNode>(LHS)) {
+      int64_t ImmVal = C->getSExtValue();
+      if (ImmVal < 0) {
+        SDValue Imm = DAG.getConstant(-ImmVal, DL, MVT::i32);
+        return DAG.getNode(ISD::SUB, DL, MVT::i32, RHS, Imm);
+      }
+    }
+    break;
+  }
+  default:
+    break;
+  }
+
+  return SDValue();
 }
 
 const char *M65832TargetLowering::getTargetNodeName(unsigned Opcode) const {
@@ -549,6 +595,124 @@ SDValue M65832TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   return DAG.getNode(Opc, DL, VT, Cond, Zero, TrueVal, FalseVal, CCVal);
 }
 
+// Lower unsigned multiply with overflow (UMULO)
+// Used by __builtin_mul_overflow for unsigned types
+//
+// For UMULO i32:
+// - Do the 32-bit multiply to get the low result
+// - To check overflow, we need to determine if the full 64-bit product
+//   has any bits set in the upper 32 bits
+// - We can detect this by: overflow = (a != 0) && (b != 0) && (result/b != a)
+//   But division is expensive. Instead, we use the property that
+//   overflow occurs when result < a (for b >= 2) or result < b (for a >= 2)
+//   More precisely: if b != 0, overflow iff (result < a) || (a != 0 && result/a != b)
+//   Actually simpler: overflow iff (b != 0) && (a > result / b)
+//
+// Simplest approach: overflow = (b != 0) && (a > UINT32_MAX / b)
+// But this requires division. Alternative: overflow = (b != 0) && (result < a)
+// when b > 1. For b == 1, no overflow. For b == 0, result is 0, no overflow.
+//
+// Best approach for correctness: 
+//   result = a * b (truncated to 32 bits)
+//   overflow = (b != 0) && ((result / b) != a)
+// But we want to avoid division.
+//
+// Alternative using double-width: compute a*b as 64-bit, check high 32 bits.
+// Since M65832 doesn't have MULHU, we expand by calling __umuldi3 or similar.
+// Actually, we can use: high = mulhu(a,b) which we don't have.
+//
+// Practical solution: use the fact that for unsigned multiply overflow,
+//   if b != 0: overflow iff a > UINT_MAX / b
+// This uses division but is correct.
+//
+// Even simpler: just do the check manually
+//   result = a * b
+//   overflow = (b != 0 && a != 0 && result / a != b)
+SDValue M65832TargetLowering::LowerUMULO(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue LHS = Op.getOperand(0);  // a
+  SDValue RHS = Op.getOperand(1);  // b
+  
+  // Compute result = a * b (32-bit, truncated)
+  SDValue Result = DAG.getNode(ISD::MUL, DL, MVT::i32, LHS, RHS);
+  
+  // Overflow detection: (b != 0) && (a != result / b)
+  // But division is expensive. Use alternative:
+  // overflow = (b != 0) && (result / b != a)
+  // 
+  // Actually, use a different method that avoids division:
+  // Split into cases and compute conservatively:
+  // - If either a or b is 0, no overflow
+  // - Otherwise, check if a > UINT32_MAX / b, which still needs division
+  //
+  // Just use the division check since we don't have MULHU:
+  // overflow = (b != 0) && ((result / b) != a)
+  
+  SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
+  
+  // Check if b != 0
+  SDValue BNonZero = DAG.getSetCC(DL, MVT::i32, RHS, Zero, ISD::SETNE);
+  
+  // Compute result / b (unsigned division)
+  SDValue Quotient = DAG.getNode(ISD::UDIV, DL, MVT::i32, Result, RHS);
+  
+  // Check if quotient != a
+  SDValue QuotientNeA = DAG.getSetCC(DL, MVT::i32, Quotient, LHS, ISD::SETNE);
+  
+  // Overflow = (b != 0) && (quotient != a)
+  SDValue Overflow = DAG.getNode(ISD::AND, DL, MVT::i32, BNonZero, QuotientNeA);
+  
+  return DAG.getMergeValues({Result, Overflow}, DL);
+}
+
+// Lower signed multiply with overflow (SMULO)
+// Used by __builtin_mul_overflow for signed types
+//
+// For SMULO i32:
+// - Compute the 32-bit product
+// - Overflow occurs if the mathematical result can't fit in 32 bits
+// - For signed: overflow if result/b != a (when b != 0), 
+//   but need to handle signed division carefully
+// - Special case: INT_MIN / -1 overflows
+//
+// Use the check: if b != 0, overflow iff (result / b != a) || 
+//                (a == INT_MIN && b == -1)
+// But signed division of INT_MIN by -1 is UB in C, so handle specially
+SDValue M65832TargetLowering::LowerSMULO(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue LHS = Op.getOperand(0);  // a
+  SDValue RHS = Op.getOperand(1);  // b
+  
+  // Compute result = a * b (32-bit, truncated)
+  SDValue Result = DAG.getNode(ISD::MUL, DL, MVT::i32, LHS, RHS);
+  
+  SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
+  SDValue NegOne = DAG.getConstant(-1, DL, MVT::i32);
+  SDValue IntMin = DAG.getConstant(INT32_MIN, DL, MVT::i32);
+  
+  // Special case: a == INT_MIN && b == -1 always overflows
+  SDValue IsIntMin = DAG.getSetCC(DL, MVT::i32, LHS, IntMin, ISD::SETEQ);
+  SDValue IsNegOne = DAG.getSetCC(DL, MVT::i32, RHS, NegOne, ISD::SETEQ);
+  SDValue SpecialOverflow = DAG.getNode(ISD::AND, DL, MVT::i32, IsIntMin, IsNegOne);
+  
+  // Check if b != 0
+  SDValue BNonZero = DAG.getSetCC(DL, MVT::i32, RHS, Zero, ISD::SETNE);
+  
+  // Compute result / b (signed division) - safe because we exclude b==0 case
+  SDValue Quotient = DAG.getNode(ISD::SDIV, DL, MVT::i32, Result, RHS);
+  
+  // Check if quotient != a
+  SDValue QuotientNeA = DAG.getSetCC(DL, MVT::i32, Quotient, LHS, ISD::SETNE);
+  
+  // Normal overflow = (b != 0) && (quotient != a)
+  SDValue NormalOverflow = DAG.getNode(ISD::AND, DL, MVT::i32, BNonZero, QuotientNeA);
+  
+  // Total overflow = special case || normal case
+  SDValue Overflow = DAG.getNode(ISD::OR, DL, MVT::i32, SpecialOverflow, NormalOverflow);
+  
+  return DAG.getMergeValues({Result, Overflow}, DL);
+}
+
 SDValue M65832TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   MachineFunction &MF = DAG.getMachineFunction();
   M65832MachineFunctionInfo *FuncInfo = MF.getInfo<M65832MachineFunctionInfo>();
@@ -719,6 +883,15 @@ SDValue M65832TargetLowering::LowerFormalArguments(
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
   CCInfo.AnalyzeFormalArguments(Ins, CC_M65832);
+
+  // M65832 call entry sequence:
+  // - Caller stores stack args at SP + 4 (reserving 4 bytes).
+  // - JSR pushes 4-byte return address (SP -= 4).
+  // - Callee PHB32 saves B (SP -= 4).
+  // So callee sees stack args at SP + 12 relative to entry SP.
+  const int RetAddrSize = 4;
+  const int SavedBSize = 4;
+  const int StackArgBase = RetAddrSize * 2 + SavedBSize;
   
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
     CCValAssign &VA = ArgLocs[i];
@@ -759,7 +932,7 @@ SDValue M65832TargetLowering::LowerFormalArguments(
       assert(VA.isMemLoc() && "Must be memory location");
       
       int FI = MFI.CreateFixedObject(VA.getLocVT().getSizeInBits() / 8,
-                                     VA.getLocMemOffset(), true);
+                                     VA.getLocMemOffset() + StackArgBase, true);
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
       SDValue Load = DAG.getLoad(VA.getLocVT(), DL, Chain, FIN,
                                  MachinePointerInfo::getFixedStack(MF, FI));
@@ -769,7 +942,7 @@ SDValue M65832TargetLowering::LowerFormalArguments(
   
   if (isVarArg) {
     // Save the position of first vararg for va_start
-    unsigned FirstVarArg = CCInfo.getStackSize();
+    unsigned FirstVarArg = CCInfo.getStackSize() + StackArgBase;
     FuncInfo->setVarArgsFrameIndex(
         MFI.CreateFixedObject(4, FirstVarArg, true));
   }
@@ -801,9 +974,9 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   unsigned StackSize = CCInfo.getStackSize();
   
   // M65832 JSR pushes a 4-byte return address onto the stack in 32-bit mode.
-  // We must reserve space for this even when there are no stack-passed arguments.
-  // Without this, local variables on the stack would be corrupted by JSR.
-  unsigned CallFrameSize = std::max(StackSize, 4u);
+  // Reserve space for this before any stack-passed arguments.
+  const unsigned RetAddrSize = 4;
+  unsigned CallFrameSize = StackSize + RetAddrSize;
   
   // Adjust stack
   Chain = DAG.getCALLSEQ_START(Chain, CallFrameSize, 0, DL);
@@ -838,7 +1011,7 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     } else {
       assert(VA.isMemLoc() && "Must be mem loc");
       SDValue StackPtr = DAG.getCopyFromReg(Chain, DL, M65832::SP, MVT::i32);
-      SDValue PtrOff = DAG.getIntPtrConstant(VA.getLocMemOffset(), DL);
+      SDValue PtrOff = DAG.getIntPtrConstant(VA.getLocMemOffset() + RetAddrSize, DL);
       PtrOff = DAG.getNode(ISD::ADD, DL, MVT::i32, StackPtr, PtrOff);
       MemOpChains.push_back(
           DAG.getStore(Chain, DL, Arg, PtrOff, MachinePointerInfo()));

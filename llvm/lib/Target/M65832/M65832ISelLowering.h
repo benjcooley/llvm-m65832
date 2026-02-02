@@ -30,6 +30,7 @@ public:
                                  const M65832Subtarget &STI);
 
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+  SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
 
   const char *getTargetNodeName(unsigned Opcode) const override;
 
@@ -60,6 +61,8 @@ private:
   SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerShiftLeftParts(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerShiftRightParts(SDValue Op, SelectionDAG &DAG, bool IsSRA) const;
+  SDValue LowerUMULO(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerSMULO(SDValue Op, SelectionDAG &DAG) const;
 
   // Calling convention lowering
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,

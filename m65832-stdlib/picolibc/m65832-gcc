@@ -1,0 +1,37 @@
+#!/bin/bash
+# Fake gcc that redirects to ld.lld for M65832 linking
+# This is called by clang when using -fuse-ld
+
+LDLLD=/Users/benjamincooley/projects/llvm-m65832/build-fast/bin/ld.lld
+
+# Filter out unsupported flags and convert to ld.lld format
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        -dynamic|-arch|-platform_version|-syslibroot|-lto_library)
+            # Skip macOS-specific single-flag options
+            shift
+            continue
+            ;;
+        -fatal_warnings)
+            ARGS+=("--fatal-warnings")
+            ;;
+        -no_warn_duplicate_libraries)
+            # Skip this flag
+            ;;
+        -lSystem|-lto_library)
+            # Skip system libraries
+            ;;
+        *.dylib|*.sdk)
+            # Skip macOS libraries and SDK paths
+            ;;
+        arm64|macos|15.*)
+            # Skip macOS platform arguments
+            ;;
+        *)
+            ARGS+=("$arg")
+            ;;
+    esac
+done
+
+exec "$LDLLD" "${ARGS[@]}"

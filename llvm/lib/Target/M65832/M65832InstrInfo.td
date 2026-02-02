@@ -196,6 +196,11 @@ def imm8  : Operand<i32>, ImmLeaf<i32, [{return isUInt<8>(Imm);}]> {
 def imm16 : Operand<i32>, ImmLeaf<i32, [{return isUInt<16>(Imm);}]> {
   let ParserMatchClass = M65832ImmAsmOperand;
 }
+// 5-bit shift count, excluding 0x1F (reserved for "shift by A")
+def imm5_non31 : Operand<i32>,
+                 ImmLeaf<i32, [{ return isUInt<5>(Imm) && Imm != 31; }]> {
+  let ParserMatchClass = M65832ImmAsmOperand;
+}
 // imm32 is just an alias for i32imm in 32-bit mode
 
 // Branch target
@@ -326,6 +331,13 @@ let isCodeGenOnly = 1, Defs = [A] in {
                       "# sub $dst, $src1, $src2",
                       [(set GPR:$dst, (sub GPR:$src1, GPR:$src2))]>;
 
+  // SUBC: dst = src1 - src2 (sets carry/borrow)
+  // Expands to: LDA src1; SEC; SBC src2; STA dst
+  let Defs = [A, SR] in
+    def SUBC_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                         "# subc $dst, $src1, $src2",
+                         [(set GPR:$dst, (subc GPR:$src1, GPR:$src2))]>;
+
   // AND: dst = src1 & src2 (A-centric form - preferred)
   // Expands to: LDA src1; AND src2; STA dst
   def AND_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
@@ -368,6 +380,14 @@ let isCodeGenOnly = 1, Defs = [A] in {
   def XORI_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src, i32imm:$imm),
                         "# xori $dst, $src, $imm",
                         [(set GPR:$dst, (xor GPR:$src, imm:$imm))]>;
+}
+
+// SUBE: dst = src1 - src2 with borrow in (uses carry)
+// Expands to: LDA src1; SBC src2; STA dst
+let isCodeGenOnly = 1, Defs = [A, SR], Uses = [SR] in {
+  def SUBE_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+                       "# sube $dst, $src1, $src2",
+                       [(set GPR:$dst, (sube GPR:$src1, GPR:$src2))]>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -618,29 +638,29 @@ def STW_IND_Y : FE8_IND_Y_W<0x81, (outs), (ins GPR:$src, GPR:$base),
 
 let Defs = [SR] in {
   // SHL with constant: op=0, cnt=imm -> (0<<5)|cnt
-  def SHLR : FE9<0x00, (outs GPR:$dst), (ins GPR:$src, i32imm:$cnt),
+  def SHLR : FE9<0x00, (outs GPR:$dst), (ins GPR:$src, imm5_non31:$cnt),
                  "SHL\t$dst,$src,#$cnt",
-                 [(set GPR:$dst, (shl GPR:$src, (i32 imm:$cnt)))]>;
+                 [(set GPR:$dst, (shl GPR:$src, imm5_non31:$cnt))]>;
 
   // SHR with constant: op=1 -> (1<<5)|cnt = $20|cnt
-  def SHRR : FE9<0x20, (outs GPR:$dst), (ins GPR:$src, i32imm:$cnt),
+  def SHRR : FE9<0x20, (outs GPR:$dst), (ins GPR:$src, imm5_non31:$cnt),
                  "SHR\t$dst,$src,#$cnt",
-                 [(set GPR:$dst, (srl GPR:$src, (i32 imm:$cnt)))]>;
+                 [(set GPR:$dst, (srl GPR:$src, imm5_non31:$cnt))]>;
 
   // SAR with constant: op=2 -> (2<<5)|cnt = $40|cnt
-  def SARR : FE9<0x40, (outs GPR:$dst), (ins GPR:$src, i32imm:$cnt),
+  def SARR : FE9<0x40, (outs GPR:$dst), (ins GPR:$src, imm5_non31:$cnt),
                  "SAR\t$dst,$src,#$cnt",
-                 [(set GPR:$dst, (sra GPR:$src, (i32 imm:$cnt)))]>;
+                 [(set GPR:$dst, (sra GPR:$src, imm5_non31:$cnt))]>;
 
   // ROL with constant: op=3 -> (3<<5)|cnt = $60|cnt
-  def ROLR : FE9<0x60, (outs GPR:$dst), (ins GPR:$src, i32imm:$cnt),
+  def ROLR : FE9<0x60, (outs GPR:$dst), (ins GPR:$src, imm5_non31:$cnt),
                  "ROL\t$dst,$src,#$cnt",
-                 [(set GPR:$dst, (rotl GPR:$src, (i32 imm:$cnt)))]>;
+                 [(set GPR:$dst, (rotl GPR:$src, imm5_non31:$cnt))]>;
 
   // ROR with constant: op=4 -> (4<<5)|cnt = $80|cnt
-  def RORR : FE9<0x80, (outs GPR:$dst), (ins GPR:$src, i32imm:$cnt),
+  def RORR : FE9<0x80, (outs GPR:$dst), (ins GPR:$src, imm5_non31:$cnt),
                  "ROR\t$dst,$src,#$cnt",
-                 [(set GPR:$dst, (rotr GPR:$src, (i32 imm:$cnt)))]>;
+                 [(set GPR:$dst, (rotr GPR:$src, imm5_non31:$cnt))]>;
 
   // Variable shifts (by A register): cnt=$1F
   def SHLR_VAR : FE9<0x1F, (outs GPR:$dst), (ins GPR:$src, ACC:$amt),
@@ -774,6 +794,10 @@ let isCodeGenOnly = 1, mayStore = 1, Defs = [A] in {
   def STORE32 : Pseudo<(outs), (ins GPR:$src, memsrc:$addr),
                        "# store32 $src, $addr",
                        [(store GPR:$src, ADDRri:$addr)]>;
+
+  def STORE32_IMM : Pseudo<(outs), (ins i32imm:$src, memsrc:$addr),
+                           "# store32 $src, $addr",
+                           [(store timm:$src, ADDRri:$addr)]>;
 
   def STORE32_GLOBAL : Pseudo<(outs), (ins GPR:$src, i32imm:$addr),
                               "# store32 $src, $addr",

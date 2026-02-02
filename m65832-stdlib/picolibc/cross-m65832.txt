@@ -16,8 +16,10 @@ exe_wrapper = ['/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolib
 [built-in options]
 # Note: -g disabled due to debug info crash in MCAssembler::layout() - bug to fix
 # Note: -O2+ disabled due to analyzeBranch() crash in BranchFolder - bug to fix  
-c_args = ['-O1']
-c_link_args = ['-nostdlib']
+c_args = ['-O1', '-nostdlib']
+c_link_args = ['-L/Users/benjamincooley/projects/m65832-sysroot/lib',
+               '-lcompiler_rt',
+               '-Wl,--defsym=_heap_end=__heap_end']
 
 [host_machine]
 system = 'none'
@@ -27,3 +29,11 @@ endian = 'little'
 
 [properties]
 skip_sanity_check = true
+default_ram_size = '0x00020000'
+default_noflash_ram_size = '0x00020000'
+default_flash_size = '0x00200000'
+default_noflash_flash_size = '0x00200000'
+default_flash_addr = '0x00000000'
+default_ram_addr = '0x00200000'
+default_noflash_flash_addr = '0x00000000'
+default_noflash_ram_addr = '0x00000000'

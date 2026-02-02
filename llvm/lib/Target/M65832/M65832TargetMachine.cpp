@@ -18,6 +18,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/CodeGen/PeepholeOptimizer.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Transforms/Scalar.h"
@@ -55,6 +56,9 @@ M65832TargetMachine::M65832TargetMachine(const Target &T, const Triple &TT,
       TLOF(std::make_unique<M65832TargetObjectFile>()),
       Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
+  // FastISel is not implemented for M65832; disable to avoid incorrect codegen.
+  setFastISel(false);
+  setO0WantsFastISel(false);
 }
 
 namespace {
@@ -69,6 +73,7 @@ public:
   }
 
   bool addInstSelector() override;
+  void addPostRegAlloc() override;
   void addPreEmitPass() override;
 };
 } // namespace
@@ -80,6 +85,11 @@ TargetPassConfig *M65832TargetMachine::createPassConfig(PassManagerBase &PM) {
 bool M65832PassConfig::addInstSelector() {
   addPass(createM65832ISelDag(getM65832TargetMachine(), getOptLevel()));
   return false;
+}
+
+void M65832PassConfig::addPostRegAlloc() {
+  // Skip post-RA passes for now; peephole crashes on M65832.
+  disablePass(&PeepholeOptimizerLegacyID);
 }
 
 void M65832PassConfig::addPreEmitPass() {

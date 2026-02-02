@@ -90,6 +90,137 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
     if (selectFrameIndex(N))
       return;
     break;
+  case M65832ISD::SELECT_CC: {
+    SDLoc DL(N);
+    SDValue LHS = N->getOperand(0);
+    SDValue RHS = N->getOperand(1);
+    SDValue TrueVal = N->getOperand(2);
+    SDValue FalseVal = N->getOperand(3);
+    SDValue CCVal = N->getOperand(4);
+
+    auto materializeConst = [&](SDValue V) -> SDValue {
+      if (V.getOpcode() == ISD::Constant || V.getOpcode() == ISD::TargetConstant ||
+          V.getOpcode() == ISD::UNDEF) {
+        int64_t ImmVal = 0;
+        if (auto *C = dyn_cast<ConstantSDNode>(V))
+          ImmVal = C->getSExtValue();
+        SDValue Imm = CurDAG->getTargetConstant(ImmVal, DL, MVT::i32);
+        return SDValue(CurDAG->getMachineNode(M65832::LDR_IMM, DL, MVT::i32, Imm), 0);
+      }
+      return V;
+    };
+
+    SDValue TV = materializeConst(TrueVal);
+    SDValue FV = materializeConst(FalseVal);
+
+    if (auto *C = dyn_cast<ConstantSDNode>(CCVal))
+      CCVal = CurDAG->getTargetConstant(C->getSExtValue(), DL, MVT::i32);
+
+    SDValue Ops[] = {LHS, RHS, TV, FV, CCVal};
+    SDNode *Sel = CurDAG->getMachineNode(
+        M65832::SELECT_CC_PSEUDO, DL, N->getValueType(0), Ops);
+    ReplaceNode(N, Sel);
+    return;
+  }
+  case ISD::UNDEF:
+    if (N->getValueType(0) == MVT::i32) {
+      SDLoc DL(N);
+      SDValue Imm = CurDAG->getTargetConstant(0, DL, MVT::i32);
+      SDNode *Z = CurDAG->getMachineNode(M65832::LDR_IMM, DL, MVT::i32, Imm);
+      ReplaceNode(N, Z);
+      return;
+    }
+    break;
+  case ISD::STORE: {
+    auto *ST = cast<StoreSDNode>(N);
+    SDValue Val = ST->getValue();
+    if (Val.getOpcode() == ISD::ADD ||
+        (Val.getOpcode() == ISD::OR && Val.getNode()->getFlags().hasDisjoint())) {
+      SDValue AddSrc;
+      int64_t AddImm = 0;
+      if (auto *C = dyn_cast<ConstantSDNode>(Val.getOperand(1))) {
+        AddSrc = Val.getOperand(0);
+        AddImm = C->getSExtValue();
+      } else if (auto *C = dyn_cast<ConstantSDNode>(Val.getOperand(0))) {
+        AddSrc = Val.getOperand(1);
+        AddImm = C->getSExtValue();
+      }
+
+      if (AddSrc) {
+        SDLoc DL(N);
+        SDValue Imm = CurDAG->getTargetConstant(AddImm, DL, MVT::i32);
+        SDValue AddRes =
+            SDValue(CurDAG->getMachineNode(M65832::ADDI_GPR, DL, MVT::i32,
+                                           AddSrc, Imm),
+                    0);
+
+        SDValue Base;
+        SDValue Offset;
+        if (!selectAddr(ST->getBasePtr(), Base, Offset)) {
+          Base = ST->getBasePtr();
+          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+        }
+
+        SDValue Ops[] = {AddRes, Base, Offset, ST->getChain()};
+        SDNode *Store = CurDAG->getMachineNode(
+            M65832::STORE32, DL, CurDAG->getVTList(MVT::Other), Ops);
+        ReplaceNode(N, Store);
+        return;
+      }
+    }
+    if (Val.getOpcode() == ISD::Constant || Val.getOpcode() == ISD::TargetConstant ||
+        Val.getOpcode() == ISD::UNDEF) {
+      int64_t ImmVal = 0;
+      if (auto *C = dyn_cast<ConstantSDNode>(Val))
+        ImmVal = C->getSExtValue();
+
+      SDLoc DL(N);
+      SDValue Imm = CurDAG->getTargetConstant(ImmVal, DL, MVT::i32);
+
+      SDValue Base;
+      SDValue Offset;
+      if (!selectAddr(ST->getBasePtr(), Base, Offset)) {
+        Base = ST->getBasePtr();
+        Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+      }
+
+      SDValue Ops[] = {Imm, Base, Offset, ST->getChain()};
+      SDNode *Store = CurDAG->getMachineNode(
+          M65832::STORE32_IMM, DL, CurDAG->getVTList(MVT::Other), Ops);
+      ReplaceNode(N, Store);
+      return;
+    }
+    break;
+  }
+  case ISD::ADD: {
+    // Prefer SUBI for negative immediates (fixes 64-bit subtract lowering).
+    if (N->getValueType(0) == MVT::i32) {
+      SDValue LHS = N->getOperand(0);
+      SDValue RHS = N->getOperand(1);
+      if (auto *C = dyn_cast<ConstantSDNode>(RHS)) {
+        int64_t ImmVal = C->getSExtValue();
+        if (ImmVal < 0) {
+          SDLoc DL(N);
+          SDValue Imm = CurDAG->getTargetConstant(-ImmVal, DL, MVT::i32);
+          SDNode *Sub = CurDAG->getMachineNode(
+              M65832::SUBI_GPR, DL, MVT::i32, LHS, Imm);
+          ReplaceNode(N, Sub);
+          return;
+        }
+      } else if (auto *C = dyn_cast<ConstantSDNode>(LHS)) {
+        int64_t ImmVal = C->getSExtValue();
+        if (ImmVal < 0) {
+          SDLoc DL(N);
+          SDValue Imm = CurDAG->getTargetConstant(-ImmVal, DL, MVT::i32);
+          SDNode *Sub = CurDAG->getMachineNode(
+              M65832::SUBI_GPR, DL, MVT::i32, RHS, Imm);
+          ReplaceNode(N, Sub);
+          return;
+        }
+      }
+    }
+    break;
+  }
   case ISD::OR:
     // Disjoint OR is equivalent to ADD; prefer ADD for pointer arithmetic.
     if (N->getFlags().hasDisjoint() && N->getValueType(0) == MVT::i32) {

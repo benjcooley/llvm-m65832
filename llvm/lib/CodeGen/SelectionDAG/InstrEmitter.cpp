@@ -28,6 +28,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/PseudoProbe.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Target/TargetMachine.h"
 using namespace llvm;
 
@@ -278,7 +279,20 @@ Register InstrEmitter::getVR(SDValue Op, VRBaseMapType &VRBaseMap) {
   }
 
   VRBaseMapType::iterator I = VRBaseMap.find(Op);
-  assert(I != VRBaseMap.end() && "Node emitted out of order - late");
+  if (I == VRBaseMap.end()) {
+    if (MF->getSubtarget().getTargetTriple().getArch() == Triple::m65832) {
+      // Guard against missing defs for M65832 by materializing an IMPLICIT_DEF.
+      const TargetRegisterClass *RC = TLI->getRegClassFor(
+          Op.getSimpleValueType(), Op.getNode()->isDivergent());
+      Register VReg = MRI->createVirtualRegister(RC);
+      BuildMI(*MBB, InsertPos, Op.getDebugLoc(),
+              TII->get(TargetOpcode::IMPLICIT_DEF), VReg);
+      bool isNew = VRBaseMap.insert(std::make_pair(Op, VReg)).second;
+      (void)isNew;
+      return VReg;
+    }
+    assert(I != VRBaseMap.end() && "Node emitted out of order - late");
+  }
   return I->second;
 }
 

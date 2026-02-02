@@ -1,6 +1,20 @@
 #!/bin/bash
 # Wrapper for clang that adds M65832 target flags
-exec /Users/benjamincooley/projects/llvm-m65832/build-fast/bin/clang \
+# Adds our fake gcc to PATH so clang's linker driver uses ld.lld
+
+CLANG=/Users/benjamincooley/projects/llvm-m65832/build-fast/bin/clang
+WRAPPER_DIR=/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc
+
+# Put our fake gcc first in PATH
+export PATH="$WRAPPER_DIR:$PATH"
+
+exec "$CLANG" \
     -target m65832-elf \
     -ffreestanding \
+    -mllvm -disable-peephole \
+    -nostdlib \
+    -L/Users/benjamincooley/projects/m65832-sysroot/lib \
+    -lcompiler_rt \
+    -Wl,--defsym=_heap_end=__heap_end \
+    -fuse-ld=/Users/benjamincooley/projects/llvm-m65832/m65832-stdlib/picolibc/m65832-gcc \
     "$@"

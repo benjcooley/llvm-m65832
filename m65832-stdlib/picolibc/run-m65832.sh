@@ -8,6 +8,7 @@
 
 EMU="/Users/benjamincooley/projects/M65832/emu/m65832emu"
 MAX_CYCLES=1000000
+MEMORY_KB=4096
 
 if [ ! -x "$EMU" ]; then
     echo "Error: Emulator not found at $EMU" >&2
@@ -24,7 +25,7 @@ fi
 
 # Run on emulator with cycle limit
 # The emulator loads ELF, runs until STP instruction, and reports exit code
-OUTPUT=$("$EMU" -c "$MAX_CYCLES" "$PROG" 2>&1)
+OUTPUT=$("$EMU" -m "$MEMORY_KB" -c "$MAX_CYCLES" "$PROG" 2>&1)
 EMU_EXIT=$?
 
 # Check for emulator errors

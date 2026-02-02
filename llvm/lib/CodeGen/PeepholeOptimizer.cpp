@@ -71,6 +71,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -1699,6 +1700,9 @@ bool PeepholeOptimizer::run(MachineFunction &MF) {
 
   LLVM_DEBUG(dbgs() << "********** PEEPHOLE OPTIMIZER **********\n");
   LLVM_DEBUG(dbgs() << "********** Function: " << MF.getName() << '\n');
+
+  if (MF.getSubtarget().getTargetTriple().getArch() == Triple::m65832)
+    return false;
 
   if (DisablePeephole)
     return false;
