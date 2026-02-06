@@ -2,6 +2,12 @@
  *
  * These functions provide the minimal system interface required by picolibc.
  * For baremetal operation, most syscalls are stubs that return errors.
+ *
+ * NOTE: stdin/stdout/stderr are defined by picolibc's m65832_iob.c (in libc.a).
+ *       Do NOT define them here or you'll get duplicate symbol errors.
+ *
+ * NOTE: Compiler-rt functions (__muldi3, __udivdi3, etc.) are provided by
+ *       libcompiler_rt.a. Do NOT define them here.
  */
 
 #include <stdio.h>
@@ -19,101 +25,6 @@
 /* Status bits */
 #define UART_TX_READY  0x01
 #define UART_RX_AVAIL  0x02
-
-/* ============================================================================
- * STDIO Support - stdin/stdout/stderr via UART
- * ========================================================================= */
-
-static int uart_putc(char c, FILE *file) {
-    (void)file;
-    /* Wait for TX ready */
-    while (!(UART_STATUS & UART_TX_READY))
-        ;
-    UART_TX_DATA = (uint32_t)(unsigned char)c;
-    return (unsigned char)c;
-}
-
-static int uart_getc(FILE *file) {
-    (void)file;
-    /* Wait for RX available */
-    while (!(UART_STATUS & UART_RX_AVAIL))
-        ;
-    return (int)(UART_RX_DATA & 0xFF);
-}
-
-/* Create the stdio FILE structure */
-static FILE __stdio = FDEV_SETUP_STREAM(uart_putc, uart_getc, NULL, _FDEV_SETUP_RW);
-
-/* Define stdin, stdout, stderr */
-#ifdef __strong_reference
-#define STDIO_ALIAS(x) __strong_reference(stdin, x);
-#else
-#define STDIO_ALIAS(x) FILE * const x = &__stdio;
-#endif
-
-FILE * const stdin = &__stdio;
-STDIO_ALIAS(stdout);
-STDIO_ALIAS(stderr);
-
-/* ============================================================================
- * Compiler Runtime Support (64-bit arithmetic)
- * These are normally provided by compiler-rt/libgcc
- * ========================================================================= */
-
-/* 64-bit multiplication */
-uint64_t __muldi3(uint64_t a, uint64_t b) {
-    uint32_t al = (uint32_t)a;
-    uint32_t ah = (uint32_t)(a >> 32);
-    uint32_t bl = (uint32_t)b;
-    uint32_t bh = (uint32_t)(b >> 32);
-    
-    uint64_t result = (uint64_t)al * bl;
-    result += ((uint64_t)al * bh) << 32;
-    result += ((uint64_t)ah * bl) << 32;
-    return result;
-}
-
-/* 64-bit unsigned division */
-uint64_t __udivdi3(uint64_t num, uint64_t den) {
-    if (den == 0) return 0;  /* Avoid div by zero */
-    
-    uint64_t quot = 0;
-    int bits = 64;
-    
-    /* Simple bit-by-bit division */
-    while (bits-- > 0) {
-        quot <<= 1;
-        if (num >= den) {
-            num -= den;
-            quot |= 1;
-        }
-        den >>= 1;
-    }
-    return quot;
-}
-
-/* 64-bit signed division */
-int64_t __divdi3(int64_t a, int64_t b) {
-    int neg = 0;
-    if (a < 0) { a = -a; neg = !neg; }
-    if (b < 0) { b = -b; neg = !neg; }
-    uint64_t result = __udivdi3((uint64_t)a, (uint64_t)b);
-    return neg ? -(int64_t)result : (int64_t)result;
-}
-
-/* 64-bit unsigned modulo */
-uint64_t __umoddi3(uint64_t num, uint64_t den) {
-    return num - __udivdi3(num, den) * den;
-}
-
-/* 64-bit signed modulo */
-int64_t __moddi3(int64_t a, int64_t b) {
-    int neg = 0;
-    if (a < 0) { a = -a; neg = 1; }
-    if (b < 0) { b = -b; }
-    uint64_t result = __umoddi3((uint64_t)a, (uint64_t)b);
-    return neg ? -(int64_t)result : (int64_t)result;
-}
 
 /* ============================================================================
  * System Calls
@@ -277,4 +188,61 @@ int _kill(pid_t pid, int sig) {
  */
 pid_t _getpid(void) {
     return 1;
+}
+
+/* ============================================================================
+ * Additional filesystem/signal stubs for picolibc test compatibility
+ * ========================================================================= */
+
+int _unlink(const char *path) {
+    (void)path;
+    errno = ENOENT;
+    return -1;
+}
+
+int _link(const char *oldpath, const char *newpath) {
+    (void)oldpath;
+    (void)newpath;
+    errno = EMLINK;
+    return -1;
+}
+
+int _stat(const char *path, struct stat *st) {
+    (void)path;
+    (void)st;
+    errno = ENOENT;
+    return -1;
+}
+
+int _rename(const char *oldpath, const char *newpath) {
+    (void)oldpath;
+    (void)newpath;
+    errno = ENOENT;
+    return -1;
+}
+
+int _open(const char *path, int flags, ...) {
+    (void)path;
+    (void)flags;
+    errno = ENOENT;
+    return -1;
+}
+
+int _wait(int *status) {
+    (void)status;
+    errno = ECHILD;
+    return -1;
+}
+
+int _fork(void) {
+    errno = EAGAIN;
+    return -1;
+}
+
+int _execve(const char *name, char *const argv[], char *const env[]) {
+    (void)name;
+    (void)argv;
+    (void)env;
+    errno = ENOMEM;
+    return -1;
 }

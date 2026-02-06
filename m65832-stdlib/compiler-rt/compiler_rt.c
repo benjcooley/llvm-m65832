@@ -334,25 +334,7 @@ di_int __moddi3(di_int a, di_int b)
 /*
  * 64-bit integer/float conversion helpers
  */
-di_int __fixsfdi(float a)
-{
-    return (di_int)a;
-}
-
-di_int __fixdfdi(double a)
-{
-    return (di_int)a;
-}
-
-float __floatdisf(di_int a)
-{
-    return (float)a;
-}
-
-double __floatdidf(di_int a)
-{
-    return (double)a;
-}
+/* Signed 64-bit <-> float/double: see implementations after unsigned versions below */
 
 /*
  * 64-bit arithmetic shift right
@@ -608,4 +590,132 @@ di_int __mulodi4(di_int a, di_int b, int *overflow)
     if (a != 0 && result / a != b)
         *overflow = 1;
     return result;
+}
+
+/* ============================================================================
+ * Unsigned 64-bit <-> float/double conversions
+ * These avoid using 64-bit int operations that would recurse.
+ * ========================================================================= */
+
+float __floatundisf(du_int a)
+{
+    if (a == 0) return 0.0f;
+    /* Split into high and low 32-bit parts */
+    su_int hi = (su_int)(a >> 32);
+    su_int lo = (su_int)a;
+    if (hi == 0) return (float)lo;
+    /* hi * 2^32 + lo */
+    float result = (float)hi;
+    result *= 4294967296.0f;  /* 2^32 */
+    result += (float)lo;
+    return result;
+}
+
+double __floatundidf(du_int a)
+{
+    if (a == 0) return 0.0;
+    su_int hi = (su_int)(a >> 32);
+    su_int lo = (su_int)a;
+    if (hi == 0) return (double)lo;
+    double result = (double)hi;
+    result *= 4294967296.0;  /* 2^32 */
+    result += (double)lo;
+    return result;
+}
+
+du_int __fixunssfdi(float a)
+{
+    if (a <= 0.0f || a != a) return 0;  /* negative, zero, or NaN */
+    if (a >= 18446744073709551616.0f) return ~(du_int)0;  /* overflow */
+    /* Split: hi = a / 2^32, lo = remainder */
+    float hi_f = a * (1.0f / 4294967296.0f);
+    su_int hi = (su_int)hi_f;
+    float lo_f = a - (float)hi * 4294967296.0f;
+    su_int lo = (lo_f >= 0.0f) ? (su_int)lo_f : 0;
+    return ((du_int)hi << 32) | lo;
+}
+
+du_int __fixunsdfdi(double a)
+{
+    if (a <= 0.0 || a != a) return 0;
+    if (a >= 18446744073709551616.0) return ~(du_int)0;
+    double hi_f = a * (1.0 / 4294967296.0);
+    su_int hi = (su_int)hi_f;
+    double lo_f = a - (double)hi * 4294967296.0;
+    su_int lo = (lo_f >= 0.0) ? (su_int)lo_f : 0;
+    return ((du_int)hi << 32) | lo;
+}
+
+/* Signed 64-bit <-> float/double conversions */
+
+float __floatdisf(di_int a)
+{
+    if (a < 0) return -__floatundisf((du_int)(-a));
+    return __floatundisf((du_int)a);
+}
+
+double __floatdidf(di_int a)
+{
+    if (a < 0) return -__floatundidf((du_int)(-a));
+    return __floatundidf((du_int)a);
+}
+
+di_int __fixsfdi(float a)
+{
+    if (a < 0.0f) return -(di_int)__fixunssfdi(-a);
+    return (di_int)__fixunssfdi(a);
+}
+
+di_int __fixdfdi(double a)
+{
+    if (a < 0.0) return -(di_int)__fixunsdfdi(-a);
+    return (di_int)__fixunsdfdi(a);
+}
+
+/* ============================================================================
+ * Complex number arithmetic
+ * ========================================================================= */
+
+float _Complex __mulsc3(float a, float b, float c, float d)
+{
+    /* (a+bi) * (c+di) = (ac-bd) + (ad+bc)i */
+    float ac = a * c;
+    float bd = b * d;
+    float ad = a * d;
+    float bc = b * c;
+    float _Complex z;
+    __real__ z = ac - bd;
+    __imag__ z = ad + bc;
+    return z;
+}
+
+double _Complex __muldc3(double a, double b, double c, double d)
+{
+    double ac = a * c;
+    double bd = b * d;
+    double ad = a * d;
+    double bc = b * c;
+    double _Complex z;
+    __real__ z = ac - bd;
+    __imag__ z = ad + bc;
+    return z;
+}
+
+float _Complex __divsc3(float a, float b, float c, float d)
+{
+    /* (a+bi) / (c+di) = ((ac+bd) + (bc-ad)i) / (c*c+d*d) */
+    float denom = c * c + d * d;
+    float _Complex z;
+    __real__ z = (a * c + b * d) / denom;
+    __imag__ z = (b * c - a * d) / denom;
+    return z;
+}
+
+double _Complex __divdc3(double a, double b, double c, double d)
+{
+    double denom = c * c + d * d;
+    double _Complex z;
+    __real__ z = (a * c + b * d) / denom;
+    __imag__ z = (b * c - a * d) / denom;
+    return z;
 }
