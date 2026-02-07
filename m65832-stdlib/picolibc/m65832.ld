@@ -13,10 +13,10 @@ ENTRY(_start)
 MEMORY
 {
     /* ROM/Flash for code - starts at 128K to ensure 32-bit addressing */
-    ROM (rx)  : ORIGIN = 0x00020000, LENGTH = 384K
+    ROM (rx)  : ORIGIN = 0x00020000, LENGTH = 640K
     
-    /* RAM for data - at 512K */
-    RAM (rwx) : ORIGIN = 0x00080000, LENGTH = 512K
+    /* RAM for data - starts after ROM */
+    RAM (rwx) : ORIGIN = 0x000C0000, LENGTH = 256K
     
     /* Direct page area - GPRs are mapped at D+0x00 through D+0xFF
      * D register is set to 0x4000 in crt0, so this is 0x4000-0x40FF
@@ -53,28 +53,32 @@ SECTIONS
         _text_end = .;
     } > ROM
 
-    /* C++ constructors */
+    /* C++ constructors / init_array (picolibc uses __bothinit for combined traversal) */
     .init_array :
     {
         . = ALIGN(4);
-        __preinit_array_start = .;
+        PROVIDE_HIDDEN(__preinit_array_start = .);
+        PROVIDE_HIDDEN(__bothinit_array_start = .);
         KEEP(*(.preinit_array*))
-        __preinit_array_end = .;
+        PROVIDE_HIDDEN(__preinit_array_end = .);
         
-        __init_array_start = .;
-        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
-        KEEP(*(.init_array))
-        __init_array_end = .;
+        PROVIDE_HIDDEN(__init_array_start = .);
+        KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
+        KEEP(*(.init_array .ctors))
+        KEEP(*(.init_array_*))
+        PROVIDE_HIDDEN(__init_array_end = .);
+        PROVIDE_HIDDEN(__bothinit_array_end = .);
     } > ROM
 
-    /* C++ destructors */
+    /* C++ destructors / atexit handlers */
     .fini_array :
     {
         . = ALIGN(4);
-        __fini_array_start = .;
-        KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
-        KEEP(*(.fini_array))
-        __fini_array_end = .;
+        PROVIDE_HIDDEN(__fini_array_start = .);
+        KEEP(*(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*)))
+        KEEP(*(.fini_array .dtors))
+        KEEP(*(.fini_array_*))
+        PROVIDE_HIDDEN(__fini_array_end = .);
     } > ROM
 
     /* TLS template (thread-local storage) */

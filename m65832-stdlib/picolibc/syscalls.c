@@ -1,7 +1,8 @@
-/* syscalls.c - Picolibc system call stubs for M65832 baremetal
+/* syscalls.c - Picolibc system call stubs for M65832
  *
- * These functions provide the minimal system interface required by picolibc.
- * For baremetal operation, most syscalls are stubs that return errors.
+ * These functions provide the system interface required by picolibc.
+ * All I/O uses TRAP #0 syscalls which are handled by the emulator's
+ * system layer (--system --sandbox mode).
  *
  * NOTE: stdin/stdout/stderr are defined by picolibc's m65832_iob.c (in libc.a).
  *       Do NOT define them here or you'll get duplicate symbol errors.
@@ -16,15 +17,63 @@
 #include <errno.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <fcntl.h>
+#include <stdarg.h>
 
-/* UART registers for console I/O (memory-mapped at 0x00FFF100) */
-#define UART_STATUS    (*(volatile uint32_t *)0x00FFF100)
-#define UART_TX_DATA   (*(volatile uint32_t *)0x00FFF104)
-#define UART_RX_DATA   (*(volatile uint32_t *)0x00FFF108)
+/* ============================================================================
+ * TRAP-based Syscall Interface
+ *
+ * The M65832 TRAP #0 instruction invokes the system layer's syscall handler.
+ * Syscall number goes in R0, arguments in R1-R5, return value in R0.
+ * ========================================================================= */
 
-/* Status bits */
-#define UART_TX_READY  0x01
-#define UART_RX_AVAIL  0x02
+#define M65832_SYS_EXIT     1
+#define M65832_SYS_READ     3
+#define M65832_SYS_WRITE    4
+#define M65832_SYS_OPEN     5
+#define M65832_SYS_CLOSE    6
+#define M65832_SYS_LSEEK    19
+#define M65832_SYS_GETPID   20
+#define M65832_SYS_FSTAT    108
+#define M65832_SYS_EXIT_GRP 248
+
+static inline long __syscall0(long n) {
+    register long r0 __asm__("r0") = n;
+    __asm__ volatile(".byte 0x02, 0x40, 0x00" : "+r"(r0) : : "memory");
+    return r0;
+}
+
+static inline long __syscall1(long n, long a1) {
+    register long r0 __asm__("r0") = n;
+    register long r1 __asm__("r1") = a1;
+    __asm__ volatile(".byte 0x02, 0x40, 0x00" : "+r"(r0) : "r"(r1) : "memory");
+    return r0;
+}
+
+static inline long __syscall2(long n, long a1, long a2) {
+    register long r0 __asm__("r0") = n;
+    register long r1 __asm__("r1") = a1;
+    register long r2 __asm__("r2") = a2;
+    __asm__ volatile(".byte 0x02, 0x40, 0x00" : "+r"(r0) : "r"(r1), "r"(r2) : "memory");
+    return r0;
+}
+
+static inline long __syscall3(long n, long a1, long a2, long a3) {
+    register long r0 __asm__("r0") = n;
+    register long r1 __asm__("r1") = a1;
+    register long r2 __asm__("r2") = a2;
+    register long r3 __asm__("r3") = a3;
+    __asm__ volatile(".byte 0x02, 0x40, 0x00" : "+r"(r0) : "r"(r1), "r"(r2), "r"(r3) : "memory");
+    return r0;
+}
+
+static inline long __syscall_ret(long r) {
+    if (r < 0 && r > -4096) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return r;
+}
 
 /* ============================================================================
  * System Calls
@@ -60,95 +109,57 @@ void *_sbrk(ptrdiff_t incr) {
 }
 
 /*
- * _write - Write to a file descriptor
- *
- * For baremetal, only stdout (1) and stderr (2) are supported via UART.
+ * _write - Write to a file descriptor (via TRAP syscall)
  */
 ssize_t _write(int fd, const void *buf, size_t len) {
-    if (fd != 1 && fd != 2) {
-        errno = EBADF;
-        return -1;
-    }
-    
-    const char *p = buf;
-    for (size_t i = 0; i < len; i++) {
-        /* Wait for transmit ready */
-        while (!(UART_STATUS & UART_TX_READY))
-            ;
-        UART_TX_DATA = (uint32_t)(unsigned char)p[i];
-    }
-    
-    return (ssize_t)len;
+    return __syscall_ret(__syscall3(M65832_SYS_WRITE, fd, (long)buf, (long)len));
 }
 
 /*
- * _read - Read from a file descriptor
- *
- * For baremetal, only stdin (0) is supported via UART.
+ * _read - Read from a file descriptor (via TRAP syscall)
  */
 ssize_t _read(int fd, void *buf, size_t len) {
-    if (fd != 0) {
-        errno = EBADF;
-        return -1;
-    }
-    
-    char *p = buf;
-    size_t i;
-    for (i = 0; i < len; i++) {
-        /* Wait for receive ready */
-        while (!(UART_STATUS & UART_RX_AVAIL))
-            ;
-        p[i] = (char)(UART_RX_DATA & 0xFF);
-        
-        /* Echo and handle line endings */
-        if (p[i] == '\r' || p[i] == '\n') {
-            p[i] = '\n';
-            i++;
-            break;
-        }
-    }
-    
-    return (ssize_t)i;
+    return __syscall_ret(__syscall3(M65832_SYS_READ, fd, (long)buf, (long)len));
 }
 
 /*
- * _exit - Terminate the program
+ * _exit - Terminate the program (via TRAP syscall)
+ *
+ * Sends SYS_EXIT_GRP and SYS_EXIT to the system layer.
+ * The system layer sets cpu->exit_code and halts execution.
  */
 void __attribute__((noreturn)) _exit(int status) {
-    /* For baremetal, we just store the exit status and halt.
-     * Use a volatile write to prevent optimization. */
-    volatile int *exit_code = (volatile int *)0xFFFFFFFC;
-    *exit_code = status;
-    
-    /* Stop the processor */
-    asm volatile("stp");
-    
-    /* Never returns */
-    for(;;) { }
+    __syscall1(M65832_SYS_EXIT_GRP, status);
+    __syscall1(M65832_SYS_EXIT, status);
     __builtin_unreachable();
 }
 
 /*
- * _close - Close a file descriptor
+ * _open - Open a file (via TRAP syscall)
  */
-int _close(int fd) {
-    if (fd >= 0 && fd <= 2) {
-        return 0;
+int _open(const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
     }
-    errno = EBADF;
-    return -1;
+    return (int)__syscall_ret(__syscall3(M65832_SYS_OPEN, (long)path, (long)flags, (long)mode));
 }
 
 /*
- * _fstat - Get file status
+ * _close - Close a file descriptor (via TRAP syscall)
+ */
+int _close(int fd) {
+    return (int)__syscall_ret(__syscall1(M65832_SYS_CLOSE, fd));
+}
+
+/*
+ * _fstat - Get file status (via TRAP syscall)
  */
 int _fstat(int fd, struct stat *st) {
-    if (fd >= 0 && fd <= 2) {
-        st->st_mode = S_IFCHR;
-        return 0;
-    }
-    errno = EBADF;
-    return -1;
+    return (int)__syscall_ret(__syscall2(M65832_SYS_FSTAT, fd, (long)st));
 }
 
 /*
@@ -163,18 +174,14 @@ int _isatty(int fd) {
 }
 
 /*
- * _lseek - Seek in a file
+ * _lseek - Seek in a file (via TRAP syscall)
  */
 off_t _lseek(int fd, off_t offset, int whence) {
-    (void)fd;
-    (void)offset;
-    (void)whence;
-    errno = ESPIPE;
-    return -1;
+    return (off_t)__syscall_ret(__syscall3(M65832_SYS_LSEEK, fd, (long)offset, (long)whence));
 }
 
 /*
- * _kill - Send signal to process
+ * _kill - Send signal to process (stub)
  */
 int _kill(pid_t pid, int sig) {
     (void)pid;
@@ -184,14 +191,14 @@ int _kill(pid_t pid, int sig) {
 }
 
 /*
- * _getpid - Get process ID
+ * _getpid - Get process ID (via TRAP syscall)
  */
 pid_t _getpid(void) {
-    return 1;
+    return (pid_t)__syscall0(M65832_SYS_GETPID);
 }
 
 /* ============================================================================
- * Additional filesystem/signal stubs for picolibc test compatibility
+ * Additional stubs for picolibc test compatibility
  * ========================================================================= */
 
 int _unlink(const char *path) {
@@ -217,13 +224,6 @@ int _stat(const char *path, struct stat *st) {
 int _rename(const char *oldpath, const char *newpath) {
     (void)oldpath;
     (void)newpath;
-    errno = ENOENT;
-    return -1;
-}
-
-int _open(const char *path, int flags, ...) {
-    (void)path;
-    (void)flags;
     errno = ENOENT;
     return -1;
 }

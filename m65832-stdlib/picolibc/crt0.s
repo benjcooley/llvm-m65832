@@ -131,8 +131,13 @@ __crt_init:
     .long __libc_init_array               ; 32-bit absolute address
     
     ;
-    ; Call main()
+    ; Call main(argc=0, argv=NULL, envp=NULL)
+    ; ABI: R0=argc, R1=argv, R2=envp
     ;
+    .byte 0xA9, 0x00, 0x00, 0x00, 0x00   ; LDA #0
+    .byte 0x85, 0x00                      ; STA dp $00 (R0 = argc = 0)
+    .byte 0x85, 0x04                      ; STA dp $04 (R1 = argv = NULL)
+    .byte 0x85, 0x08                      ; STA dp $08 (R2 = envp = NULL)
     .byte 0x20                            ; JSR opcode
     .long main                            ; 32-bit absolute address
     
@@ -163,23 +168,7 @@ __crt_init:
     .size _start, .Lfunc_end - _start
     .size __crt_init, .Lfunc_end - __crt_init
 
-;
-; Weak default symbols (linker overrides if picolibc provides them)
-;
-    .weak __libc_init_array
-    .type __libc_init_array, @function
-__libc_init_array:
-    rts
-    .size __libc_init_array, . - __libc_init_array
-
-    .weak __libc_fini_array
-    .type __libc_fini_array, @function  
-__libc_fini_array:
-    rts
-    .size __libc_fini_array, . - __libc_fini_array
-
-    .weak _exit
-    .type _exit, @function
-_exit:
-    stp
-    .size _exit, . - _exit
+; NOTE: __libc_init_array, __libc_fini_array, and _exit are NOT defined here.
+; They come from picolibc's libc.a and libsys.a respectively.
+; This forces the linker to pull in the real implementations from the libraries,
+; which is essential for atexit handlers and .fini_array processing to work.

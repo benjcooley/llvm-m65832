@@ -8,31 +8,43 @@ This directory contains documentation for all fixes applied to the M65832 LLVM b
 
 | Date | Issue | Description | Tests Fixed | File |
 |------|-------|-------------|-------------|------|
+| 2026-02-06 | OR(FI, const) IMPLICIT_DEF | DAG combiner turns ADD(FI,c) to OR; handle in Select() | libc_testsuite.string, string_suite | [2026-02-06-frameindex-or-implicit-def.md](2026-02-06-frameindex-or-implicit-def.md) |
+| 2026-02-06 | truncating store corruption | Guard i8/i16 truncating stores from 32-bit optimization | snprintf, sprintf, string formatting | (in session summary) |
 | 2026-01-31 | disjoint OR in vsprintf | Treat disjoint OR as ADD for pointer arithmetic | stdio O2 hang | [2026-01-31-disjoint-or-vsprintf.md](2026-01-31-disjoint-or-vsprintf.md) |
 | 2026-01-31 | memmove OR address | Accept OR(FrameIndex, const) in selectAddr | memmove @<noreg> | [2026-01-31-memmove-or-addr.md](2026-01-31-memmove-or-addr.md) |
 | 2026-01-31 | frameindex base addr | Use TargetFrameIndex for base+offset | stdio O2 hang | [2026-01-31-frameindex-base-addr.md](2026-01-31-frameindex-base-addr.md) |
 | 2026-01-31 | STORE32 $noreg | Immediate store drops value in ISel | test_64bit_basic/divide (ongoing) | [2026-01-31-store32-noreg-isel.md](2026-01-31-store32-noreg-isel.md) |
 | 2026-01-30 | shift count 31 | Avoid reserved 0x1F immediate shift encoding | test_64bit (one << 63) | [2026-01-30-shift-imm-31.md](2026-01-30-shift-imm-31.md) |
 
-### Code Generation Fixes
+### Code Generation / Calling Convention Fixes
 
 | Date | Issue | Description | Tests Fixed | File |
 |------|-------|-------------|-------------|------|
-| _Example_ | Register spilling | Incorrect stack frame layout | complex tests | [YYYY-MM-DD-fix-description.md](YYYY-MM-DD-fix-description.md) |
+| 2026-02-06 | va_args in registers | Force variadic args to stack in LowerCall | printf, snprintf, all variadics | (in session summary) |
+
+### Runtime / System Integration Fixes
+
+| Date | Issue | Description | Tests Fixed | File |
+|------|-------|-------------|-------------|------|
+| 2026-02-06 | crt0.s argc/argv | Set R0=0,R1=NULL,R2=NULL before main() | ctype tests ("Is a directory") | (in session summary) |
+| 2026-02-06 | crt0.s weak stubs | Remove weak __libc_init_array/_exit stubs | atexit, fini_array | (in session summary) |
+| 2026-02-06 | linker script | Increase ROM to 640K, fix init/fini_array patterns | test-fma overflow, atexit | (in session summary) |
+| 2026-02-06 | TRAP syscalls | Rewrite syscalls.c with TRAP-based system calls | all I/O via emulator sandbox | (in session summary) |
+| 2026-02-06 | session summary | All fixes in this session | 157/181 tests passing | [2026-02-06-session-summary.md](2026-02-06-session-summary.md) |
 
 ### Library Implementation Fixes
 
 | Date | Issue | Description | Tests Fixed | File |
 |------|-------|-------------|-------------|------|
-| _Example_ | strtol overflow | Incorrect handling of MAX_INT | strtol edge cases | [YYYY-MM-DD-fix-description.md](YYYY-MM-DD-fix-description.md) |
 | 2026-02-01 | 64-bit udiv/umod | Fix __udivdi3/__umoddi3 runtime path | test_64bit_divide | [2026-02-01-udivmod64-runtime.md](2026-02-01-udivmod64-runtime.md) |
 
 ## Statistics
 
-- **Total fixes**: 0 (just started)
-- **Picolibc tests passing**: 27/179 baremetal tests (100% of core tests)
-- **Tests remaining**: ~15-20 issues to fix
-- **Current pass rate**: 15% overall, 100% of basic functionality
+- **Total fixes**: 12+ across ISel, calling convention, runtime, and linker
+- **Picolibc tests passing**: 157/181 (86.7%)
+- **Tests skipped**: 19 (known unsupported features)
+- **Tests remaining**: 5 failures (all library-level, not compiler bugs)
+- **Current pass rate**: 86.7% overall
 
 ## Common Issue Patterns
 

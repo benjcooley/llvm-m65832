@@ -133,6 +133,12 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
     break;
   case ISD::STORE: {
     auto *ST = cast<StoreSDNode>(N);
+    // CRITICAL: Do not apply 32-bit store optimizations to truncating stores
+    // (i8/i16). These MUST use the properly-sized STORE8/STORE16 pseudos from
+    // the TableGen patterns, otherwise the 32-bit store will corrupt adjacent
+    // memory (writing 4 bytes when only 1 or 2 are intended).
+    if (ST->isTruncatingStore())
+      break;
     SDValue Val = ST->getValue();
     if (Val.getOpcode() == ISD::ADD ||
         (Val.getOpcode() == ISD::OR && Val.getNode()->getFlags().hasDisjoint())) {
@@ -193,10 +199,40 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
     break;
   }
   case ISD::ADD: {
-    // Prefer SUBI for negative immediates (fixes 64-bit subtract lowering).
     if (N->getValueType(0) == MVT::i32) {
       SDValue LHS = N->getOperand(0);
       SDValue RHS = N->getOperand(1);
+
+      // Handle ADD(FrameIndex, constant) → LEA_FI(FI, offset).
+      // This is critical for GEP(alloca, const_offset) used as function call
+      // arguments.  Without this, the pattern matcher sees ADD(FrameIndex, imm)
+      // which doesn't match ADDI_GPR (expects GPR, not FrameIndex), causing the
+      // value to degenerate to IMPLICIT_DEF.
+      if (LHS.getOpcode() == ISD::FrameIndex) {
+        if (auto *C = dyn_cast<ConstantSDNode>(RHS)) {
+          SDLoc DL(N);
+          int FI = cast<FrameIndexSDNode>(LHS)->getIndex();
+          SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+          SDValue Offset = CurDAG->getTargetConstant(C->getSExtValue(), DL, MVT::i32);
+          SDNode *Addr = CurDAG->getMachineNode(M65832::LEA_FI, DL, MVT::i32,
+                                                TFI, Offset);
+          ReplaceNode(N, Addr);
+          return;
+        }
+      } else if (RHS.getOpcode() == ISD::FrameIndex) {
+        if (auto *C = dyn_cast<ConstantSDNode>(LHS)) {
+          SDLoc DL(N);
+          int FI = cast<FrameIndexSDNode>(RHS)->getIndex();
+          SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+          SDValue Offset = CurDAG->getTargetConstant(C->getSExtValue(), DL, MVT::i32);
+          SDNode *Addr = CurDAG->getMachineNode(M65832::LEA_FI, DL, MVT::i32,
+                                                TFI, Offset);
+          ReplaceNode(N, Addr);
+          return;
+        }
+      }
+
+      // Prefer SUBI for negative immediates (fixes 64-bit subtract lowering).
       if (auto *C = dyn_cast<ConstantSDNode>(RHS)) {
         int64_t ImmVal = C->getSExtValue();
         if (ImmVal < 0) {
@@ -223,10 +259,40 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
   }
   case ISD::OR:
     // Disjoint OR is equivalent to ADD; prefer ADD for pointer arithmetic.
+    // The DAG combiner often turns ADD(FrameIndex, small_const) into a
+    // disjoint OR when alignment guarantees no bits overlap.
     if (N->getFlags().hasDisjoint() && N->getValueType(0) == MVT::i32) {
+      SDValue LHS = N->getOperand(0);
+      SDValue RHS = N->getOperand(1);
+
+      // Handle OR(FrameIndex, constant) → LEA_FI(FI, offset) directly.
+      // This is the same fix as for ADD(FrameIndex, constant) above.
+      auto HandleFIOrConst = [&](SDValue FIVal, ConstantSDNode *C) -> bool {
+        SDLoc DL(N);
+        int FI = cast<FrameIndexSDNode>(FIVal)->getIndex();
+        SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+        SDValue Offset = CurDAG->getTargetConstant(C->getSExtValue(), DL, MVT::i32);
+        SDNode *Addr = CurDAG->getMachineNode(M65832::LEA_FI, DL, MVT::i32,
+                                              TFI, Offset);
+        ReplaceNode(N, Addr);
+        return true;
+      };
+
+      if (LHS.getOpcode() == ISD::FrameIndex) {
+        if (auto *C = dyn_cast<ConstantSDNode>(RHS)) {
+          HandleFIOrConst(LHS, C);
+          return;
+        }
+      } else if (RHS.getOpcode() == ISD::FrameIndex) {
+        if (auto *C = dyn_cast<ConstantSDNode>(LHS)) {
+          HandleFIOrConst(RHS, C);
+          return;
+        }
+      }
+
+      // For other disjoint OR cases, convert to ADD.
       SDLoc DL(N);
-      SDValue Add = CurDAG->getNode(ISD::ADD, DL, N->getValueType(0),
-                                    N->getOperand(0), N->getOperand(1));
+      SDValue Add = CurDAG->getNode(ISD::ADD, DL, N->getValueType(0), LHS, RHS);
       ReplaceNode(N, Add.getNode());
       return;
     }
@@ -325,8 +391,33 @@ bool M65832DAGToDAGISel::selectFrameIndex(SDNode *N) {
     return true;
   }
 
-  // Mixed uses: keep FI for memory ops, but materialize LEA_FI for non-memory uses.
+  // Mixed uses: keep FI for memory ops, but materialize LEA_FI for non-memory
+  // uses.  For ADD(FrameIndex, constant) users that are NOT purely memory, fold
+  // the constant offset directly into LEA_FI so the ADD is fully replaced.
+  // This avoids leaving ADD(LEA_FI_result, const) nodes that may not match any
+  // instruction pattern and degenerate to IMPLICIT_DEF.
   for (SDNode *User : NonMemUsers) {
+    // Check if this user is ADD(FrameIndex, constant) — fold offset into LEA_FI
+    if (User->getOpcode() == ISD::ADD) {
+      ConstantSDNode *CN = nullptr;
+      if (User->getOperand(0).getNode() == N)
+        CN = dyn_cast<ConstantSDNode>(User->getOperand(1));
+      else
+        CN = dyn_cast<ConstantSDNode>(User->getOperand(0));
+      if (CN) {
+        int64_t Offset = CN->getSExtValue();
+        SDValue OffsetVal = CurDAG->getTargetConstant(Offset, DL, MVT::i32);
+        SDValue FoldedAddr = SDValue(
+            CurDAG->getMachineNode(M65832::LEA_FI, DL, MVT::i32, TFI,
+                                   OffsetVal), 0);
+        LLVM_DEBUG(dbgs() << "selectFrameIndex: folding ADD(FI, " << Offset
+                          << ") into LEA_FI\n");
+        ReplaceNode(User, FoldedAddr.getNode());
+        continue;
+      }
+    }
+
+    // For other non-memory users, replace the FI operand with LEA_FI(FI, 0).
     SmallVector<SDValue, 8> Ops;
     Ops.reserve(User->getNumOperands());
     for (unsigned i = 0, e = User->getNumOperands(); i != e; ++i) {

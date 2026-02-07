@@ -973,6 +973,27 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   
   unsigned StackSize = CCInfo.getStackSize();
   
+  // For variadic calls, non-fixed (unnamed) arguments must be passed on the
+  // stack so the callee can access them via va_arg.  The CC may have assigned
+  // them to registers; override those assignments here.
+  if (isVarArg) {
+    unsigned ExtraStack = 0;
+    for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+      if (Outs[i].Flags.isVarArg() && ArgLocs[i].isRegLoc()) {
+        MVT LocVT = ArgLocs[i].getLocVT();
+        unsigned Size = LocVT.getSizeInBits() / 8;
+        unsigned Offset = StackSize + ExtraStack;
+        Offset = alignTo(Offset, std::max(4u, Size));
+        ArgLocs[i] = CCValAssign::getMem(i, ArgLocs[i].getValVT(),
+                                         Offset,
+                                         LocVT,
+                                         ArgLocs[i].getLocInfo());
+        ExtraStack = Offset + Size - StackSize;
+      }
+    }
+    StackSize += ExtraStack;
+  }
+  
   // M65832 JSR pushes a 4-byte return address onto the stack in 32-bit mode.
   // Reserve space for this before any stack-passed arguments.
   const unsigned RetAddrSize = 4;
