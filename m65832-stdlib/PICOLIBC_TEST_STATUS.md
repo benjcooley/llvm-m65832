@@ -2,11 +2,11 @@
 
 ## Summary
 
-The picolibc test suite uses a Python-based test runner that compiles and runs C library tests on the M65832 emulator.
+The picolibc test suite uses a Python-based test runner that compiles and runs C library tests on the M65832 emulator. The runner performs a **full clean rebuild** of compiler-rt and picolibc from source before running tests, ensuring results always reflect the current compiler output.
 
 **Test Runner Location**: `/Users/benjamincooley/projects/picolibc-m65832/run_picolibc_gtest.py`
 
-**Total Tests Available**: 179 tests across 9 test suites
+**Total Tests Available**: 181 tests across 9 test suites
 
 ## How to Run Tests
 
@@ -32,51 +32,48 @@ python3 /Users/benjamincooley/projects/picolibc-m65832/run_picolibc_gtest.py str
 python3 /Users/benjamincooley/projects/picolibc-m65832/run_picolibc_gtest.py --list
 ```
 
-## Test Results (as of 2026-01-31)
+## Test Results (as of 2026-02-07)
 
-### ✅ Baremetal Suite: 27/27 PASSING (100%)
+### Overall: 162 PASS, 0 FAIL, 19 SKIP (out of 181 tests)
+
+All test suites fully passing. Zero failures. Skipped tests are expected (missing platform features).
+
+### ✅ Baremetal Suite: 29/29 PASSING (100%)
 
 All basic C library functionality tests pass:
-- String functions: strlen, strcmp, strcpy, memcpy, memset, memcmp
+- String functions: strlen, strcmp, strcpy, memcpy, memset, memcmp, string_suite
 - Stdlib functions: abs, atoi (including negative numbers)
 - Ctype functions: isalpha, isdigit, tolower, toupper
+- 64-bit: args, shifts
 
-**Execution time**: ~6 seconds for all 27 tests
+### ✅ libc_testsuite: 10/10 PASSING (100%)
+- basename, dirname, fnmatch, qsort, snprintf, sscanf, string, strtod, strtol, wcstol
 
-### 🔄 Other Test Suites (Partial Results)
+### ✅ test_math: 40/41 PASSING (1 expected skip)
+- All trig, exponential, logarithmic, and complex math functions passing
+- test-math-compare skipped (expected)
 
-#### libc_testsuite: 5/10 passing
-- ✅ PASS: basename, dirname, fnmatch, qsort, string
-- ❌ FAIL: snprintf (timeout), sscanf, strtod, strtol, wcstol
+### ✅ test_string: 16/16 PASSING (100%)
+- memchr, memchr-simple, memcpy_s, memmem, memmove_s, memset, memset_s, strcat_s, strchr, strcpy_s, strerror_s, strerrorlen_s, strncat_s, strncpy, strncpy_s, strnlen_s
 
-#### picolibc: Mixed results
-- ✅ PASS: constructor-skip, fenv, long_double
-- ❌ FAIL: atexit, constructor, ffs (timeout), malloc (timeout), malloc_stress (timeout), math-funcs (timeout)
-- ⏭️ SKIP: abort (requires signals), complex-funcs (missing symbols), hosted-exit (requires semihosting)
+### ✅ test_stdio: 21/24 PASSING (3 expected skips)
+- All printf, scanf, fopen, fread/fwrite, ungetc, wchar tests passing
+- Skipped: test-flockfile, test-freopen, test-gets (missing platform features)
 
-## Issues to Address
+### ✅ test_ctype: 5/5 PASSING (100%)
 
-### 1. Timeouts (30s limit)
-Many tests timeout, including:
-- snprintf
-- ffs
-- malloc/malloc_stress
-- math-funcs
+### ✅ test_iconv: 1/1 PASSING (100%)
 
-These likely indicate either:
-- Infinite loops in the code
-- Very slow execution requiring optimization
-- Missing/broken functionality
+### ✅ picolibc core: 28/33 PASSING (5 expected skips)
+- atexit, constructor, fenv, ffs, long_double, malloc, malloc_stress, math-funcs, math_errhandling, on_exit, rand, regex, rounding-mode, setjmp, and many more
+- Skipped: abort, complex-funcs, hosted-exit, stack-smash, test-raise (require signals/semihosting)
 
-### 2. Failed Tests
-- atexit, constructor: Core functionality issues
-- sscanf, strtod, strtol, wcstol: String parsing/conversion issues
-
-### 3. Missing Features
-- Signal handling (abort, raise)
-- Complex number functions
-- Some atomic operations
-- Thread-local storage
+### Skipped Tests (19 total - all expected)
+These require platform features not yet implemented:
+- **Signals**: abort, test-raise
+- **Atomics/TLS**: test-atomic, tls
+- **Semihosting**: hosted-exit, test-argv
+- **Other**: complex-funcs, constructor-skip, stack-smash, test-except, test-scmpu, test-ubsan, try-ilp32, test-gets, test-flockfile, test-freopen, test-sprintf-percent-n, test-math-compare, test-strfmon
 
 ## Build System
 

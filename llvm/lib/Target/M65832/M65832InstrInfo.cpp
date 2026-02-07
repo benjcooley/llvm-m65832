@@ -1700,6 +1700,13 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       }
       BrOpc = M65832::BCC;
       break;
+    // IEEE 754 ordered/unordered FP comparisons (from FCMP):
+    // FCMP flags: Equal->Z=1, Less->N=1, Greater->N=0,Z=0, NaN->N=0,Z=0
+    case ISD::SETO:    BrOpc = M65832::BEQ; break;  // Ordered (self-cmp: Z=1 iff not NaN)
+    case ISD::SETUO:   BrOpc = M65832::BNE; break;  // Unordered (self-cmp: Z=0 iff NaN)
+    case ISD::SETOEQ:  BrOpc = M65832::BEQ; break;  // Ordered equal
+    case ISD::SETUNE:  BrOpc = M65832::BNE; break;  // Unordered or not-equal
+    case ISD::SETOLT:  BrOpc = M65832::BMI; break;  // Ordered less than
     default:
       BrOpc = M65832::BNE;
       break;

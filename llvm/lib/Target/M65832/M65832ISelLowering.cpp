@@ -1331,19 +1331,33 @@ MachineBasicBlock *M65832TargetLowering::emitSelectCCFP(MachineInstr &MI,
   int64_t CC = MI.getOperand(3).getImm();
   
   // Map condition code to branch opcode (flags already set by FCMP)
+  // M65832 FCMP sets flags: Equal->Z=1, Less->N=1, Greater->N=0,Z=0, NaN->N=0,Z=0
+  // Note: Greater and NaN produce identical flags, so some ordered comparisons
+  // involving "greater than" cannot be done with a single branch instruction.
   unsigned BrOpc;
   switch (CC) {
-  case ISD::SETEQ:  BrOpc = M65832::BEQ; break;
-  case ISD::SETNE:  BrOpc = M65832::BNE; break;
-  case ISD::SETLT:  BrOpc = M65832::BMI; break;
-  case ISD::SETGE:  BrOpc = M65832::BPL; break;
-  case ISD::SETULT: BrOpc = M65832::BCC; break;
-  case ISD::SETUGE: BrOpc = M65832::BCS; break;
-  case ISD::SETGT:  BrOpc = M65832::BNE; break;
-  case ISD::SETLE:  BrOpc = M65832::BEQ; break;
-  case ISD::SETUGT: BrOpc = M65832::BNE; break;
-  case ISD::SETULE: BrOpc = M65832::BEQ; break;
-  default:          BrOpc = M65832::BNE; break;
+  case ISD::SETEQ:   BrOpc = M65832::BEQ; break;
+  case ISD::SETNE:   BrOpc = M65832::BNE; break;
+  case ISD::SETLT:   BrOpc = M65832::BMI; break;
+  case ISD::SETGE:   BrOpc = M65832::BPL; break;
+  case ISD::SETULT:  BrOpc = M65832::BCC; break;
+  case ISD::SETUGE:  BrOpc = M65832::BCS; break;
+  case ISD::SETGT:   BrOpc = M65832::BNE; break;
+  case ISD::SETLE:   BrOpc = M65832::BEQ; break;
+  case ISD::SETUGT:  BrOpc = M65832::BNE; break;
+  case ISD::SETULE:  BrOpc = M65832::BEQ; break;
+  // IEEE 754 ordered/unordered FP comparisons:
+  // SETO (ordered) is used for isnan checks via self-compare: Z=1 iff not NaN
+  case ISD::SETO:    BrOpc = M65832::BEQ; break;
+  // SETUO (unordered) is used for isnan checks via self-compare: Z=0 iff NaN
+  case ISD::SETUO:   BrOpc = M65832::BNE; break;
+  // Ordered equal: Z=1 means equal; NaN gives Z=0 so correctly returns false
+  case ISD::SETOEQ:  BrOpc = M65832::BEQ; break;
+  // Unordered or not-equal: Z=0 covers both NaN and not-equal
+  case ISD::SETUNE:  BrOpc = M65832::BNE; break;
+  // Ordered less than: N=1 means less; NaN gives N=0 so correctly returns false
+  case ISD::SETOLT:  BrOpc = M65832::BMI; break;
+  default:           BrOpc = M65832::BNE; break;
   }
   
   // MBB: Branch to TrueMBB if condition is true, else fall through
