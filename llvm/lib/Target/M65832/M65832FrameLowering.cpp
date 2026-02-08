@@ -181,11 +181,14 @@ M65832FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   
   // B is set to SP after local allocation (bottom of locals).
   // The callee-saved registers are pushed after B is set, below the locals.
+  // The outgoing call argument space is allocated below the callee saves.
   //
   // Frame layout (stack grows down):
   //   High addr: [old B from PHB]
   //              [locals - StackSize bytes]  <-- B points here
-  //   Low addr:  [callee-saved regs]         <-- pushed after B is set
+  //              [callee-saved regs]         <-- pushed after B is set
+  //   Low addr:  [outgoing call args]        <-- reserved after callee saves
+  //              SP
   //
   // MFI.getObjectOffset gives negative offsets within the local area.
   // Convert to a positive offset from B.
@@ -200,6 +203,7 @@ bool M65832FrameLowering::spillCalleeSavedRegisters(
   if (CSI.empty())
     return true;
 
+  MachineFunction &MF = *MBB.getParent();
   const M65832InstrInfo &TII =
       *static_cast<const M65832InstrInfo *>(Subtarget.getInstrInfo());
   DebugLoc DL;
@@ -222,6 +226,27 @@ bool M65832FrameLowering::spillCalleeSavedRegisters(
         .addReg(M65832::A, RegState::Kill);
   }
   
+  // After pushing callee-saved registers, allocate space for outgoing call
+  // arguments. The call arg area must be below the callee-save area so that
+  // SP-relative argument stores (STA (SP),Y with Y=4,8,...) don't clobber
+  // the saved register values.
+  if (hasReservedCallFrame(MF)) {
+    uint64_t MaxCallFrameSize = MF.getFrameInfo().getMaxCallFrameSize();
+    if (MaxCallFrameSize > 0) {
+      BuildMI(MBB, MI, DL, TII.get(M65832::TSX), M65832::X);
+      BuildMI(MBB, MI, DL, TII.get(M65832::TXA), M65832::A)
+          .addReg(M65832::X);
+      BuildMI(MBB, MI, DL, TII.get(M65832::SEC));
+      BuildMI(MBB, MI, DL, TII.get(M65832::SBC_IMM), M65832::A)
+          .addReg(M65832::A)
+          .addImm(MaxCallFrameSize);
+      BuildMI(MBB, MI, DL, TII.get(M65832::TAX), M65832::X)
+          .addReg(M65832::A);
+      BuildMI(MBB, MI, DL, TII.get(M65832::TXS))
+          .addReg(M65832::X);
+    }
+  }
+  
   return true;
 }
 
@@ -231,11 +256,31 @@ bool M65832FrameLowering::restoreCalleeSavedRegisters(
   if (CSI.empty())
     return true;
 
+  MachineFunction &MF = *MBB.getParent();
   const M65832InstrInfo &TII =
       *static_cast<const M65832InstrInfo *>(Subtarget.getInstrInfo());
   DebugLoc DL;
   if (MI != MBB.end())
     DL = MI->getDebugLoc();
+
+  // Before restoring callee-saved registers, deallocate the outgoing call
+  // argument space that was allocated after the callee saves in the prologue.
+  if (hasReservedCallFrame(MF)) {
+    uint64_t MaxCallFrameSize = MF.getFrameInfo().getMaxCallFrameSize();
+    if (MaxCallFrameSize > 0) {
+      BuildMI(MBB, MI, DL, TII.get(M65832::TSX), M65832::X);
+      BuildMI(MBB, MI, DL, TII.get(M65832::TXA), M65832::A)
+          .addReg(M65832::X);
+      BuildMI(MBB, MI, DL, TII.get(M65832::CLC));
+      BuildMI(MBB, MI, DL, TII.get(M65832::ADC_IMM), M65832::A)
+          .addReg(M65832::A)
+          .addImm(MaxCallFrameSize);
+      BuildMI(MBB, MI, DL, TII.get(M65832::TAX), M65832::X)
+          .addReg(M65832::A);
+      BuildMI(MBB, MI, DL, TII.get(M65832::TXS))
+          .addReg(M65832::X);
+    }
+  }
 
   // Restore each callee-saved register by popping from stack (reverse order)
   for (auto I = CSI.rbegin(), E = CSI.rend(); I != E; ++I) {
