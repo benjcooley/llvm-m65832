@@ -37,11 +37,11 @@ class M65832Subtarget : public M65832GenSubtargetInfo {
   bool HasHWMul = true;
   bool HasAtomics = true;
 
+  M65832RegisterInfo RegInfo;
   M65832InstrInfo InstrInfo;
   M65832FrameLowering FrameLowering;
-  M65832TargetLowering TLInfo;
   M65832SelectionDAGInfo TSInfo;
-  M65832RegisterInfo RegInfo;
+  M65832TargetLowering TLInfo;
 
 public:
   M65832Subtarget(const Triple &TT, const std::string &CPU,

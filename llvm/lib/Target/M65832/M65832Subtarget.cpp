@@ -27,10 +27,10 @@ M65832Subtarget::M65832Subtarget(const Triple &TT, const std::string &CPU,
                                    const TargetMachine &TM)
     : M65832GenSubtargetInfo(TT, CPU, /*TuneCPU*/ CPU, FS),
       TargetTriple(TT),
+      RegInfo(*this),
       InstrInfo(*this),
       FrameLowering(*this),
-      TLInfo(TM, *this),
-      RegInfo(*this) {
+      TLInfo(TM, *this) {
   
   // Parse features string
   std::string CPUName = std::string(CPU);
