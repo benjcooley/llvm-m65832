@@ -193,6 +193,12 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::TYA:       return 0x98;
   case M65832::TSX:       return 0xBA;
   case M65832::TXS:       return 0x9A;
+  case M65832::TXY:       return 0x9B;
+  case M65832::TYX:       return 0xBB;
+  case M65832::TCS:       return 0x1B;
+  case M65832::TSC:       return 0x3B;
+  case M65832::TCD:       return 0x5B;
+  case M65832::TDC:       return 0x7B;
   
   // Increment/Decrement X/Y
   case M65832::INX:       return 0xE8;

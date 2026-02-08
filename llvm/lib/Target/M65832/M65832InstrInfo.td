@@ -1154,6 +1154,12 @@ def TAY : F0<0xA8, (outs), (ins ACC:$src), "TAY", []> { let Defs = [SR, Y]; let 
 def TYA : F0<0x98, (outs ACC:$dst), (ins), "TYA", []> { let Defs = [SR]; let Uses = [Y]; }
 def TSX : F0<0xBA, (outs XREG:$dst), (ins), "TSX", []> { let Defs = [SR]; let Uses = [SP]; }
 def TXS : F0<0x9A, (outs), (ins XREG:$src), "TXS", []> { let Defs = [SP]; }
+def TXY : F0<0x9B, (outs), (ins XREG:$src), "TXY", []> { let Defs = [SR, Y]; let Uses = [X]; }
+def TYX : F0<0xBB, (outs XREG:$dst), (ins), "TYX", []> { let Defs = [SR]; let Uses = [Y]; }
+def TCS : F0<0x1B, (outs), (ins ACC:$src), "TCS", []> { let Defs = [SP]; let Uses = [A]; }
+def TSC : F0<0x3B, (outs ACC:$dst), (ins), "TSC", []> { let Defs = [SR]; let Uses = [SP]; }
+def TCD : F0<0x5B, (outs), (ins ACC:$src), "TCD", []> { let Defs = [D]; let Uses = [A]; }
+def TDC : F0<0x7B, (outs ACC:$dst), (ins), "TDC", []> { let Defs = [SR]; let Uses = [D]; }
 
 // Extended B register transfers ($02 prefix)
 // TAB: Transfer A to B (opcode $02 $91)
