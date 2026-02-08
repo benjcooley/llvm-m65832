@@ -15,8 +15,8 @@
 using namespace llvm;
 
 M65832MCAsmInfo::M65832MCAsmInfo(const Triple &TT) {
-  // Use traditional 6502-style assembly syntax
-  CommentString = ";";
+  // Use // for comments (# is reserved for immediates like LDA #0x1234)
+  CommentString = "//";
   
   // Data directives
   Data8bitsDirective = "\t.byte\t";
@@ -31,8 +31,8 @@ M65832MCAsmInfo::M65832MCAsmInfo(const Triple &TT) {
   AsciiDirective = "\t.ascii\t";
   AscizDirective = "\t.asciz\t";
   
-  // Section switching
-  SeparatorString = "\n";
+  // Allow ; as inline statement separator (used by Linux kernel macros)
+  SeparatorString = ";";
   
   // Local labels
   PrivateGlobalPrefix = ".L";
