@@ -1414,8 +1414,10 @@ M65832TargetLowering::getRegForInlineAsmConstraint(
     default:
       break;
     case 'r':
-      // General-purpose register
-      if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8)
+      // General-purpose register - return GPR for all integer types.
+      // For types wider than 32 bits (e.g. i64), LLVM will automatically
+      // use multiple registers via getNumRegisters().
+      if (VT.isInteger() || VT == MVT::Other)
         return std::make_pair(0U, &M65832::GPRRegClass);
       break;
     case 'a':

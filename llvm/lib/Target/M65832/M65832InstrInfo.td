@@ -2062,32 +2062,32 @@ def FCVT_SD : Instruction {
 //===----------------------------------------------------------------------===//
 
 let isAsmParserOnly = 1 in {
-  // LDA from GPR
-  def LDAr : F1<0xA5, (outs ACC:$dst), (ins GPR:$src),
+  // LDA from GPR (GPRAll: accept all R0-R63 including reserved regs)
+  def LDAr : F1<0xA5, (outs ACC:$dst), (ins GPRAll:$src),
                 "LDA\t$src", []>;
   
   // STA to GPR
-  def STAr : F1<0x85, (outs), (ins ACC:$src, GPR:$dst),
+  def STAr : F1<0x85, (outs), (ins ACC:$src, GPRAll:$dst),
                 "STA\t$dst", []>;
   
   // LDX from GPR
-  def LDXr : F1<0xA6, (outs XREG:$dst), (ins GPR:$src),
+  def LDXr : F1<0xA6, (outs XREG:$dst), (ins GPRAll:$src),
                 "LDX\t$src", []>;
   
   // STX to GPR
-  def STXr : F1<0x86, (outs), (ins XREG:$src, GPR:$dst),
+  def STXr : F1<0x86, (outs), (ins XREG:$src, GPRAll:$dst),
                 "STX\t$dst", []>;
   
   // LDY from GPR
-  def LDYr : F1<0xA4, (outs IDXREG:$dst), (ins GPR:$src),
+  def LDYr : F1<0xA4, (outs IDXREG:$dst), (ins GPRAll:$src),
                 "LDY\t$src", []>;
   
   // STY to GPR
-  def STYr : F1<0x84, (outs), (ins IDXREG:$src, GPR:$dst),
+  def STYr : F1<0x84, (outs), (ins IDXREG:$src, GPRAll:$dst),
                 "STY\t$dst", []>;
   
   // ADC with GPR
-  def ADCr : F1<0x65, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+  def ADCr : F1<0x65, (outs ACC:$dst), (ins ACC:$src1, GPRAll:$src2),
                 "ADC\t$src2", []> {
     let Constraints = "$src1 = $dst";
     let Defs = [SR];
@@ -2095,7 +2095,7 @@ let isAsmParserOnly = 1 in {
   }
   
   // SBC with GPR
-  def SBCr : F1<0xE5, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+  def SBCr : F1<0xE5, (outs ACC:$dst), (ins ACC:$src1, GPRAll:$src2),
                 "SBC\t$src2", []> {
     let Constraints = "$src1 = $dst";
     let Defs = [SR];
@@ -2103,72 +2103,72 @@ let isAsmParserOnly = 1 in {
   }
   
   // AND with GPR
-  def ANDr : F1<0x25, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+  def ANDr : F1<0x25, (outs ACC:$dst), (ins ACC:$src1, GPRAll:$src2),
                 "AND\t$src2", []> {
     let Constraints = "$src1 = $dst";
     let Defs = [SR];
   }
   
   // ORA with GPR
-  def ORAr : F1<0x05, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+  def ORAr : F1<0x05, (outs ACC:$dst), (ins ACC:$src1, GPRAll:$src2),
                 "ORA\t$src2", []> {
     let Constraints = "$src1 = $dst";
     let Defs = [SR];
   }
   
   // EOR with GPR
-  def EORr : F1<0x45, (outs ACC:$dst), (ins ACC:$src1, GPR:$src2),
+  def EORr : F1<0x45, (outs ACC:$dst), (ins ACC:$src1, GPRAll:$src2),
                 "EOR\t$src2", []> {
     let Constraints = "$src1 = $dst";
     let Defs = [SR];
   }
   
   // CMP with GPR
-  def CMPr : F1<0xC5, (outs), (ins ACC:$lhs, GPR:$rhs),
+  def CMPr : F1<0xC5, (outs), (ins ACC:$lhs, GPRAll:$rhs),
                 "CMP\t$rhs", []> {
     let Defs = [SR];
   }
   
   // INC GPR
-  def INCr : F1<0xE6, (outs), (ins GPR:$dst),
+  def INCr : F1<0xE6, (outs), (ins GPRAll:$dst),
                 "INC\t$dst", []> {
     let Defs = [SR];
   }
   
   // DEC GPR
-  def DECr : F1<0xC6, (outs), (ins GPR:$dst),
+  def DECr : F1<0xC6, (outs), (ins GPRAll:$dst),
                 "DEC\t$dst", []> {
     let Defs = [SR];
   }
   
   // ASL GPR
-  def ASLr : F1<0x06, (outs), (ins GPR:$dst),
+  def ASLr : F1<0x06, (outs), (ins GPRAll:$dst),
                 "ASL\t$dst", []> {
     let Defs = [SR];
   }
   
   // LSR GPR
-  def LSRr : F1<0x46, (outs), (ins GPR:$dst),
+  def LSRr : F1<0x46, (outs), (ins GPRAll:$dst),
                 "LSR\t$dst", []> {
     let Defs = [SR];
   }
   
   // ROL GPR
-  def ROLr : F1<0x26, (outs), (ins GPR:$dst),
+  def ROLr : F1<0x26, (outs), (ins GPRAll:$dst),
                 "ROL\t$dst", []> {
     let Defs = [SR];
     let Uses = [SR];
   }
   
   // ROR GPR
-  def RORr : F1<0x66, (outs), (ins GPR:$dst),
+  def RORr : F1<0x66, (outs), (ins GPRAll:$dst),
                 "ROR\t$dst", []> {
     let Defs = [SR];
     let Uses = [SR];
   }
   
   // STZ GPR
-  def STZr : F1<0x64, (outs), (ins GPR:$dst),
+  def STZr : F1<0x64, (outs), (ins GPRAll:$dst),
                 "STZ\t$dst", []>;
   
   // Indirect register addressing: LDA (Rn) - load from address in Rn
