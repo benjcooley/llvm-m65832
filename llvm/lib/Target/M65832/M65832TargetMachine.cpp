@@ -42,7 +42,11 @@ static Reloc::Model getEffectiveRelocModel(std::optional<Reloc::Model> RM) {
 // f32:32, f64:64 = floating point alignment
 // n32 = native 32-bit integers
 // S32 = 32-bit stack alignment
-static const char *M65832DataLayout = "e-m:e-p:32:32-i8:8-i16:16-i32:32-i64:64-f32:32-f64:64-n32-S32";
+// i64:32:64 = 4-byte ABI alignment, 8-byte preferred. On this 32-bit target,
+// i64 values on the stack (including variadic args) use 4-byte alignment.
+// This must match the calling convention (CCAssignToStack<8, 4> for i64)
+// and va_arg expansion so that callers and callees agree on stack layout.
+static const char *M65832DataLayout = "e-m:e-p:32:32-i8:8-i16:16-i32:32-i64:32:64-f32:32-f64:32:64-n32-S32";
 
 M65832TargetMachine::M65832TargetMachine(const Target &T, const Triple &TT,
                                            StringRef CPU, StringRef FS,
