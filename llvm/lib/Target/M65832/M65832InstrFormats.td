@@ -162,6 +162,27 @@ class FE8_IMM<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> patter
   let Opcode = opmode;
 }
 
+// LONG (32-bit) absolute addressing
+class FE8_ABS<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 8;  // $02 $op mode dest abs32
+  let Opcode = opmode;
+}
+
+// LONG (32-bit) B-relative addressing (B+offset16)
+class FE8_BREL<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 6;  // $02 $op mode dest offset16
+  let Opcode = opmode;
+}
+
+// LONG (32-bit) indirect indexed (dp),Y
+class FE8_IND_Y<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
+    : M65832Inst<outs, ins, asmstr, pattern> {
+  let Size = 5;  // $02 $op mode dest base_dp (Y register is implicit)
+  let Opcode = opmode;
+}
+
 // BYTE (8-bit) variants for sized loads/stores
 class FE8_DP_B<bits<8> opmode, dag outs, dag ins, string asmstr, list<dag> pattern>
     : M65832Inst<outs, ins, asmstr, pattern> {

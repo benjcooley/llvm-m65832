@@ -45,7 +45,7 @@ run_test() {
         -o "$test_elf" \
         "$SYSROOT/lib/crt0.o" \
         "$test_obj" \
-        -L"$SYSROOT/lib" -lcompiler_rt 2>&1
+        -L"$SYSROOT/lib" -lc -lsys -lm -lcompiler_rt 2>&1
     
     if [ $? -ne 0 ]; then
         echo -e "${RED}FAIL${NC}: $test_name (link failed)"

@@ -3,11 +3,16 @@
 # Provides software implementations of 64-bit arithmetic
 # and floating-point conversion functions.
 
-LLVM_BUILD ?= /Users/benjamincooley/projects/llvm-m65832/build-fast
+# Derive LLVM_BUILD from this Makefile's location (sibling project layout):
+# this file is at llvm-m65832/m65832-stdlib/compiler-rt/Makefile
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+LLVM_ROOT := $(abspath $(MAKEFILE_DIR)/../..)
+LLVM_BUILD ?= $(LLVM_ROOT)/build-fast
 CC = $(LLVM_BUILD)/bin/clang
 AR = ar
 
-SYSROOT ?= /Users/benjamincooley/projects/m65832-sysroot
+PROJECTS_DIR := $(abspath $(LLVM_ROOT)/..)
+SYSROOT ?= $(PROJECTS_DIR)/m65832-sysroot
 
 CFLAGS = -target m65832-elf -O0 -ffreestanding -fno-builtin
 CFLAGS += -Wall -Wextra

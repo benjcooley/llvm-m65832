@@ -176,13 +176,17 @@ void M65832InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   }
   
   // FPU register copies
-  if (M65832::FPR32RegClass.contains(DestReg) && M65832::FPR32RegClass.contains(SrcReg)) {
-    BuildMI(MBB, I, DL, get(M65832::FMOV_S), DestReg)
+  // IMPORTANT: Check FPR64 first! FPR32 and FPR64 share the same physical
+  // registers (F0-F15). FMOV_D copies all 64 bits (safe for both f32 and f64),
+  // while FMOV_S only copies the low 32 bits (corrupts doubles).
+  // Always use FMOV_D to avoid truncation bugs.
+  if (M65832::FPR64RegClass.contains(DestReg) && M65832::FPR64RegClass.contains(SrcReg)) {
+    BuildMI(MBB, I, DL, get(M65832::FMOV_D), DestReg)
         .addReg(SrcReg, getKillRegState(KillSrc));
     return;
   }
   
-  if (M65832::FPR64RegClass.contains(DestReg) && M65832::FPR64RegClass.contains(SrcReg)) {
+  if (M65832::FPR32RegClass.contains(DestReg) && M65832::FPR32RegClass.contains(SrcReg)) {
     BuildMI(MBB, I, DL, get(M65832::FMOV_D), DestReg)
         .addReg(SrcReg, getKillRegState(KillSrc));
     return;
@@ -739,12 +743,12 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
 
   case M65832::LOAD32: {
-    // Load from memory address: LDA (base+offset); STA dst
+    // Load from memory address into GPR using extended LD instruction.
+    // Uses LD.L (32-bit) which loads directly into a GP register
+    // without clobbering A or flags. Only Y is needed for indirect indexed.
     Register DstReg = MI.getOperand(0).getReg();
     
-    // Check operand types - base can be a register or frame index
     if (!MI.getOperand(1).isReg()) {
-      // Frame index or other - should have been eliminated, treat as error
       llvm_unreachable("LOAD32 operand 1 should be a register after frame index elimination");
     }
     
@@ -753,115 +757,94 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     if (MI.getNumOperands() > 2 && MI.getOperand(2).isImm()) {
       Offset = MI.getOperand(2).getImm();
     }
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
 
-    // For frame index, BaseReg will be FP (R29) or SP
-    // Use indexed indirect addressing via Y
     if (BaseReg == M65832::B) {
-      // Use B+offset addressing
-      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
+      // B-relative addressing: LD.L Rd, B+offset16 - no clobbers at all
+      // Uses the extended instruction to target GP register directly,
+      // avoiding the A clobber of the traditional LDA B+$XXXX.
+      BuildMI(MBB, MI, DL, get(M65832::LDL_BREL), DstReg)
           .addImm(Offset);
-    } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-      // Load base pointer into a temp register and use indirect addressing
-      unsigned BaseDP = getDPOffset(29); // R29 = FP
-      if (BaseReg == M65832::SP) {
-        // TSX; TXA; store to temp; then use temp as base
-        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-        BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
-        // For simplicity, compute effective address and load
-        if (Offset != 0) {
-          BuildMI(MBB, MI, DL, get(M65832::CLC));
-          BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-              .addReg(M65832::A)
-              .addImm(Offset);
-        }
-        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
-        // LDA 0,X
-        BuildMI(MBB, MI, DL, get(M65832::LDA_ABS_X), M65832::A)
-            .addImm(0)
-            .addReg(M65832::X);
-      } else {
-        // Use frame pointer - set Y to offset, then use indirect indexed
-        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        BuildMI(MBB, MI, DL, get(M65832::LDA_IND_Y), M65832::A)
-            .addImm(BaseDP);
+    } else if (BaseReg == M65832::SP) {
+      // SP-relative: no extended instruction for SP-based addressing.
+      // Fall back to legacy: TSX; TXA; ADC offset; TAX; LDA 0,X; STA dp
+      unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+      BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+      if (Offset != 0) {
+        BuildMI(MBB, MI, DL, get(M65832::CLC));
+        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+            .addReg(M65832::A)
+            .addImm(Offset);
       }
+      BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
+      BuildMI(MBB, MI, DL, get(M65832::LDA_ABS_X), M65832::A)
+          .addImm(0)
+          .addReg(M65832::X);
+      BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+          .addReg(M65832::A, RegState::Kill)
+          .addImm(DstDP);
     } else {
-      // Regular GPR base
-      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
+      // GPR base (including R29/FP): LDY #offset; LD.L Rd, (Rbase),Y
+      // Only clobbers Y - no A clobber!
       BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-      BuildMI(MBB, MI, DL, get(M65832::LDA_IND_Y), M65832::A)
-          .addImm(BaseDP);
+      BuildMI(MBB, MI, DL, get(M65832::LDL_IND_Y), DstReg)
+          .addReg(BaseReg);
     }
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
     break;
   }
 
   case M65832::LOAD32_GLOBAL: {
-    // Load from global address: LDA global; STA dst
+    // Load from global address: LD.L Rd, abs32 - no clobbers at all!
     Register DstReg = MI.getOperand(0).getReg();
-    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_ABS), M65832::A)
-        .add(MI.getOperand(1)); // Copy the global address operand
-    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-        .addReg(M65832::A, RegState::Kill)
-        .addImm(DstDP);
+    BuildMI(MBB, MI, DL, get(M65832::LDL_ABS), DstReg)
+        .add(MI.getOperand(1));
     break;
   }
 
   case M65832::STORE32: {
-    // Store to memory address: LDA src; STA (base+offset)
+    // Store GPR to memory using extended ST instruction.
+    // Uses ST.L (32-bit) which stores directly from a GP register
+    // without clobbering A or flags. Only Y is needed for indirect indexed.
     Register SrcReg = MI.getOperand(0).getReg();
     Register BaseReg = MI.getOperand(1).getReg();
     int64_t Offset = 0;
     if (MI.getNumOperands() > 2 && MI.getOperand(2).isImm()) {
       Offset = MI.getOperand(2).getImm();
     }
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
 
     if (BaseReg == M65832::B) {
-      BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
-          .addReg(M65832::A, RegState::Kill)
+      // B-relative addressing: ST.L B+offset16, Rd - no clobbers at all
+      // Uses the extended instruction to source from GP register directly,
+      // avoiding the A clobber of the traditional STA B+$XXXX.
+      BuildMI(MBB, MI, DL, get(M65832::STL_BREL))
+          .addReg(SrcReg)
           .addImm(Offset);
-    } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-      unsigned BaseDP = getDPOffset(29);
-      if (BaseReg == M65832::SP) {
-        // Save A, compute address, store
-        // Note: PHA lowers SP by 4 (32-bit push), so we must add 4 to offset
-        // to compensate: effective_addr = (SP - 4) + (Offset + 4) = SP + Offset
-        BuildMI(MBB, MI, DL, get(M65832::PHA)).addReg(M65832::A);
-        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-        BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
-        // Always add (Offset + 4) to compensate for PHA
-        int64_t AdjustedOffset = Offset + 4;
-        BuildMI(MBB, MI, DL, get(M65832::CLC));
-        BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
-            .addReg(M65832::A)
-            .addImm(AdjustedOffset);
-        BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
-        BuildMI(MBB, MI, DL, get(M65832::PLA), M65832::A);
-        BuildMI(MBB, MI, DL, get(M65832::STA_ABS_X))
-            .addReg(M65832::A, RegState::Kill)
-            .addImm(0)
-            .addReg(M65832::X);
-      } else {
-        // Use frame pointer
-        BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
-            .addReg(M65832::A, RegState::Kill)
-            .addImm(BaseDP);
-      }
-    } else {
-      unsigned BaseDP = getDPOffset(BaseReg - M65832::R0);
-      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-      BuildMI(MBB, MI, DL, get(M65832::STA_IND_Y))
+    } else if (BaseReg == M65832::SP) {
+      // SP-relative: no extended instruction for SP-based addressing.
+      // Fall back to legacy: LDA src; PHA; TSX; TXA; ADC; TAX; PLA; STA 0,X
+      unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+      BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+      BuildMI(MBB, MI, DL, get(M65832::PHA)).addReg(M65832::A);
+      BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+      BuildMI(MBB, MI, DL, get(M65832::TXA), M65832::A).addReg(M65832::X);
+      int64_t AdjustedOffset = Offset + 4;
+      BuildMI(MBB, MI, DL, get(M65832::CLC));
+      BuildMI(MBB, MI, DL, get(M65832::ADC_IMM), M65832::A)
+          .addReg(M65832::A)
+          .addImm(AdjustedOffset);
+      BuildMI(MBB, MI, DL, get(M65832::TAX), M65832::X).addReg(M65832::A);
+      BuildMI(MBB, MI, DL, get(M65832::PLA), M65832::A);
+      BuildMI(MBB, MI, DL, get(M65832::STA_ABS_X))
           .addReg(M65832::A, RegState::Kill)
-          .addImm(BaseDP);
+          .addImm(0)
+          .addReg(M65832::X);
+    } else {
+      // GPR base (including R29/FP): LDY #offset; ST.L (Rbase),Y, Rd
+      // Only clobbers Y - no A clobber!
+      BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
+      BuildMI(MBB, MI, DL, get(M65832::STL_IND_Y))
+          .addReg(SrcReg)
+          .addReg(BaseReg);
     }
     break;
   }
@@ -919,56 +902,41 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
 
   case M65832::STORE32_GLOBAL: {
-    // Store to global address: LDA src; STA global
+    // Store to global address: ST.L abs32, Rd - no clobbers at all!
     Register SrcReg = MI.getOperand(0).getReg();
-    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
-
-    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
-    BuildMI(MBB, MI, DL, get(M65832::STA_ABS))
-        .addReg(M65832::A, RegState::Kill)
-        .add(MI.getOperand(1)); // Copy the global address operand
+    BuildMI(MBB, MI, DL, get(M65832::STL_ABS))
+        .addReg(SrcReg)
+        .add(MI.getOperand(1));
     break;
   }
 
   case M65832::LOAD8:
   case M65832::LOAD8_GLOBAL: {
     // Load byte from memory, zero-extended to 32-bit
-    // Uses Extended ALU LD.B instruction which explicitly encodes byte size
+    // Uses Extended ALU LD.B instruction - no A clobber
     Register DstReg = MI.getOperand(0).getReg();
 
     if (MI.getOpcode() == M65832::LOAD8_GLOBAL) {
-      // Load byte from global address using Extended ALU LD.B
       BuildMI(MBB, MI, DL, get(M65832::LDB_ABS), DstReg)
           .add(MI.getOperand(1));
     } else {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        // B-relative byte load using Extended ALU LD.B abs
         BuildMI(MBB, MI, DL, get(M65832::LDB_ABS), DstReg)
             .addImm(Offset);
-      } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Stack/frame-based: compute address, use indirect Y load
-        // Store base address in a temp register, set Y to offset
-        Register TempReg = M65832::R16;  // Use a temp register
-        if (BaseReg == M65832::SP) {
-          BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
-              .addReg(M65832::X)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        } else {
-          unsigned FrameDP = getDPOffset(29); // R29 = FP
-          BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
-          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-              .addReg(M65832::A, RegState::Kill)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        }
+      } else if (BaseReg == M65832::SP) {
+        // SP not a GPR - copy to temp, then use indirect Y
+        Register TempReg = M65832::R16;
+        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+        BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+            .addReg(M65832::X)
+            .addImm(getDPOffset(TempReg - M65832::R0));
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        // Use Extended ALU LD.B with indirect Y addressing
         BuildMI(MBB, MI, DL, get(M65832::LDB_IND_Y), DstReg)
             .addReg(TempReg);
       } else {
-        // Register indirect with Y offset - use Extended ALU LD.B (dp),Y
+        // GPR base (including R29/FP) - use directly with LD.B (base),Y
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
         BuildMI(MBB, MI, DL, get(M65832::LDB_IND_Y), DstReg)
             .addReg(BaseReg);
@@ -980,41 +948,29 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::LOAD16:
   case M65832::LOAD16_GLOBAL: {
     // Load 16-bit from memory, zero-extended to 32-bit
-    // Uses Extended ALU LD.W instruction which explicitly encodes word size
+    // Uses Extended ALU LD.W instruction - no A clobber
     Register DstReg = MI.getOperand(0).getReg();
 
     if (MI.getOpcode() == M65832::LOAD16_GLOBAL) {
-      // Load word from global address using Extended ALU LD.W
       BuildMI(MBB, MI, DL, get(M65832::LDW_ABS), DstReg)
           .add(MI.getOperand(1));
     } else {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        // B-relative word load using Extended ALU LD.W abs
         BuildMI(MBB, MI, DL, get(M65832::LDW_ABS), DstReg)
             .addImm(Offset);
-      } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Stack/frame-based: compute address, use indirect Y load
-        Register TempReg = M65832::R16;  // Use a temp register
-        if (BaseReg == M65832::SP) {
-          BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
-              .addReg(M65832::X)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        } else {
-          unsigned FrameDP = getDPOffset(29); // R29 = FP
-          BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
-          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-              .addReg(M65832::A, RegState::Kill)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        }
+      } else if (BaseReg == M65832::SP) {
+        Register TempReg = M65832::R16;
+        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+        BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+            .addReg(M65832::X)
+            .addImm(getDPOffset(TempReg - M65832::R0));
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        // Use Extended ALU LD.W with indirect Y addressing
         BuildMI(MBB, MI, DL, get(M65832::LDW_IND_Y), DstReg)
             .addReg(TempReg);
       } else {
-        // Register indirect with Y offset - use Extended ALU LD.W (dp),Y
+        // GPR base (including R29/FP) - use directly with LD.W (base),Y
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
         BuildMI(MBB, MI, DL, get(M65832::LDW_IND_Y), DstReg)
             .addReg(BaseReg);
@@ -1026,11 +982,10 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::STORE8:
   case M65832::STORE8_GLOBAL: {
     // Truncating store - store only low 8 bits
-    // Uses Extended ALU ST.B instruction which explicitly encodes byte size
+    // Uses Extended ALU ST.B instruction - no A clobber
     Register SrcReg = MI.getOperand(0).getReg();
 
     if (MI.getOpcode() == M65832::STORE8_GLOBAL) {
-      // Store byte to global address using Extended ALU ST.B
       BuildMI(MBB, MI, DL, get(M65832::STB_ABS))
           .addReg(SrcReg)
           .add(MI.getOperand(1));
@@ -1038,32 +993,21 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        // B-relative byte store using Extended ALU ST.B abs
         BuildMI(MBB, MI, DL, get(M65832::STB_ABS))
             .addReg(SrcReg)
             .addImm(Offset);
-      } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Stack/frame-based: compute address, use indirect Y store
-        Register TempReg = M65832::R16;  // Use a temp register
-        if (BaseReg == M65832::SP) {
-          BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
-              .addReg(M65832::X)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        } else {
-          unsigned FrameDP = getDPOffset(29); // R29 = FP
-          BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
-          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-              .addReg(M65832::A, RegState::Kill)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        }
+      } else if (BaseReg == M65832::SP) {
+        Register TempReg = M65832::R16;
+        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+        BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+            .addReg(M65832::X)
+            .addImm(getDPOffset(TempReg - M65832::R0));
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        // Use Extended ALU ST.B with indirect Y addressing
         BuildMI(MBB, MI, DL, get(M65832::STB_IND_Y))
             .addReg(SrcReg)
             .addReg(TempReg);
       } else {
-        // Register indirect with Y offset - use Extended ALU ST.B (dp),Y
+        // GPR base (including R29/FP) - use directly with ST.B (base),Y
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
         BuildMI(MBB, MI, DL, get(M65832::STB_IND_Y))
             .addReg(SrcReg)
@@ -1076,11 +1020,10 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::STORE16:
   case M65832::STORE16_GLOBAL: {
     // Truncating store - store only low 16 bits
-    // Uses Extended ALU ST.W instruction which explicitly encodes word size
+    // Uses Extended ALU ST.W instruction - no A clobber
     Register SrcReg = MI.getOperand(0).getReg();
 
     if (MI.getOpcode() == M65832::STORE16_GLOBAL) {
-      // Store word to global address using Extended ALU ST.W
       BuildMI(MBB, MI, DL, get(M65832::STW_ABS))
           .addReg(SrcReg)
           .add(MI.getOperand(1));
@@ -1088,32 +1031,21 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       Register BaseReg = MI.getOperand(1).getReg();
       int64_t Offset = MI.getNumOperands() > 2 ? MI.getOperand(2).getImm() : 0;
       if (BaseReg == M65832::B) {
-        // B-relative word store using Extended ALU ST.W abs
         BuildMI(MBB, MI, DL, get(M65832::STW_ABS))
             .addReg(SrcReg)
             .addImm(Offset);
-      } else if (BaseReg == M65832::R29 || BaseReg == M65832::SP) {
-        // Stack/frame-based: compute address, use indirect Y store
-        Register TempReg = M65832::R16;  // Use a temp register
-        if (BaseReg == M65832::SP) {
-          BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
-          BuildMI(MBB, MI, DL, get(M65832::STX_DP))
-              .addReg(M65832::X)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        } else {
-          unsigned FrameDP = getDPOffset(29); // R29 = FP
-          BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(FrameDP);
-          BuildMI(MBB, MI, DL, get(M65832::STA_DP))
-              .addReg(M65832::A, RegState::Kill)
-              .addImm(getDPOffset(TempReg - M65832::R0));
-        }
+      } else if (BaseReg == M65832::SP) {
+        Register TempReg = M65832::R16;
+        BuildMI(MBB, MI, DL, get(M65832::TSX), M65832::X);
+        BuildMI(MBB, MI, DL, get(M65832::STX_DP))
+            .addReg(M65832::X)
+            .addImm(getDPOffset(TempReg - M65832::R0));
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
-        // Use Extended ALU ST.W with indirect Y addressing
         BuildMI(MBB, MI, DL, get(M65832::STW_IND_Y))
             .addReg(SrcReg)
             .addReg(TempReg);
       } else {
-        // Register indirect with Y offset - use Extended ALU ST.W (dp),Y
+        // GPR base (including R29/FP) - use directly with ST.W (base),Y
         BuildMI(MBB, MI, DL, get(M65832::LDY_IMM), M65832::Y).addImm(Offset);
         BuildMI(MBB, MI, DL, get(M65832::STW_IND_Y))
             .addReg(SrcReg)
@@ -1155,7 +1087,6 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::LDF32:
   case M65832::LDF64: {
     // Load float from memory (base+offset) into FPU register
-    // Use register-indirect mode: LDF Fn, (Rm) - but Rm must be R0-R15!
     Register DstReg = MI.getOperand(0).getReg();
     Register BaseReg = MI.getOperand(1).getReg();
     int64_t Offset = 0;
@@ -1163,7 +1094,6 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       Offset = MI.getOperand(2).getImm();
     }
     
-    // Use LDF.S for f32 (32-bit), LDF for f64 (64-bit)
     bool IsSingle = (MI.getOpcode() == M65832::LDF32);
     unsigned LoadOpc = IsSingle ? M65832::LDF_S_ind : M65832::LDF_ind;
     
@@ -1174,9 +1104,14 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       // Simple case: LDF Fn, (Rm) with R0-R15
       BuildMI(MBB, MI, DL, get(LoadOpc), DstReg)
           .addReg(BaseReg);
+    } else if (BaseReg == M65832::B && !IsSingle && isUInt<16>(Offset)) {
+      // B-relative f64 load: use LDF Fn, B+offset directly
+      // No R0/A clobber needed - much better for register pressure!
+      BuildMI(MBB, MI, DL, get(M65832::LDF_abs), DstReg)
+          .addImm(Offset);
     } else if (BaseReg == M65832::B) {
       // B register: compute effective address B+Offset into R0
-      // Use TBA to read B directly (frame base now stored in B)
+      // (used for f32 B-relative, or f64 with offset > 16 bits)
       BuildMI(MBB, MI, DL, get(M65832::TBA), M65832::A);
       if (Offset != 0) {
         BuildMI(MBB, MI, DL, get(M65832::CLC));
@@ -1241,7 +1176,6 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case M65832::STF32:
   case M65832::STF64: {
     // Store float from FPU register to memory (base+offset)
-    // Use register-indirect mode: STF Fn, (Rm) - but Rm must be R0-R15!
     Register SrcReg = MI.getOperand(0).getReg();
     Register BaseReg = MI.getOperand(1).getReg();
     int64_t Offset = 0;
@@ -1249,7 +1183,6 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       Offset = MI.getOperand(2).getImm();
     }
     
-    // Use STF.S for f32 (32-bit), STF for f64 (64-bit)
     bool IsSingle = (MI.getOpcode() == M65832::STF32);
     unsigned StoreOpc = IsSingle ? M65832::STF_S_ind : M65832::STF_ind;
     
@@ -1261,9 +1194,15 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       BuildMI(MBB, MI, DL, get(StoreOpc))
           .addReg(SrcReg)
           .addReg(BaseReg);
+    } else if (BaseReg == M65832::B && !IsSingle && isUInt<16>(Offset)) {
+      // B-relative f64 store: use STF Fn, B+offset directly
+      // No R0/A clobber needed - much better for register pressure!
+      BuildMI(MBB, MI, DL, get(M65832::STF_abs))
+          .addReg(SrcReg)
+          .addImm(Offset);
     } else if (BaseReg == M65832::B) {
       // B register: compute effective address B+Offset into R0
-      // Use TBA to read B directly (frame base now stored in B)
+      // (used for f32 B-relative, or f64 with offset > 16 bits)
       BuildMI(MBB, MI, DL, get(M65832::TBA), M65832::A);
       if (Offset != 0) {
         BuildMI(MBB, MI, DL, get(M65832::CLC));
@@ -1365,6 +1304,36 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     
     BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
     BuildMI(MBB, MI, DL, get(M65832::I2F_D_real), DstFPR);
+    break;
+  }
+
+  // FPU Bitcast pseudos (raw bit transfer, no conversion)
+  // BITCAST_F32_TO_I32: FTOA Fd (A = Fd[31:0] raw bits), STA dp (store to GPR)
+  case M65832::BITCAST_F32_TO_I32: {
+    Register DstReg = MI.getOperand(0).getReg();
+    Register SrcFPR = MI.getOperand(1).getReg();
+    unsigned DstDP = getDPOffset(DstReg - M65832::R0);
+
+    // FTOA Fd - raw bits of Fd[31:0] -> A
+    BuildMI(MBB, MI, DL, get(M65832::FTOA))
+        .addReg(SrcFPR);
+    // Store A to destination GPR
+    BuildMI(MBB, MI, DL, get(M65832::STA_DP))
+        .addReg(M65832::A, RegState::Kill)
+        .addImm(DstDP);
+    break;
+  }
+
+  // BITCAST_I32_TO_F32: LDA dp (load GPR to A), ATOF Fd (A raw bits -> Fd[31:0])
+  case M65832::BITCAST_I32_TO_F32: {
+    Register DstFPR = MI.getOperand(0).getReg();
+    Register SrcReg = MI.getOperand(1).getReg();
+    unsigned SrcDP = getDPOffset(SrcReg - M65832::R0);
+
+    // Load source GPR into A
+    BuildMI(MBB, MI, DL, get(M65832::LDA_DP), M65832::A).addImm(SrcDP);
+    // ATOF Fd - raw bits of A -> Fd[31:0]
+    BuildMI(MBB, MI, DL, get(M65832::ATOF), DstFPR);
     break;
   }
 

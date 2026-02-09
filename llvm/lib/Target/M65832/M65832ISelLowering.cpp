@@ -230,9 +230,11 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   // (Can't do extending load directly, need separate load and convert)
   setLoadExtAction(ISD::EXTLOAD, MVT::f64, MVT::f32, Expand);
   
-  // FP/Int bitcast - expand through memory (no direct FMV instruction)
-  setOperationAction(ISD::BITCAST, MVT::f32, Expand);
-  setOperationAction(ISD::BITCAST, MVT::i32, Expand);
+  // FP/Int bitcast f32<->i32 - use FTOA/ATOF register transfer instructions
+  // (raw bit transfer, no numeric conversion)
+  setOperationAction(ISD::BITCAST, MVT::f32, Legal);
+  setOperationAction(ISD::BITCAST, MVT::i32, Legal);
+  // FP/Int bitcast f64<->i64 - expand through memory (no 64-bit GPR)
   setOperationAction(ISD::BITCAST, MVT::f64, Expand);
   setOperationAction(ISD::BITCAST, MVT::i64, Expand);
   

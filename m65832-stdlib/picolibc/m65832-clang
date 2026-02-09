@@ -1,40 +1,8 @@
 #!/bin/bash
 # Wrapper for clang that adds M65832 target flags
-# Conditionally omits linker flags during compile-only steps (-c)
-# so that meson feature detection checks don't fail with
-# -Werror=unused-command-line-argument
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LLVM_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CLANG="$LLVM_ROOT/build-fast/bin/clang"
-COMPILER_RT_DIR="$LLVM_ROOT/m65832-stdlib/compiler-rt"
-
-# Put our fake gcc first in PATH
-export PATH="$SCRIPT_DIR:$PATH"
-
-# Check if this is a compile-only invocation
-COMPILE_ONLY=false
-for arg in "$@"; do
-    case "$arg" in
-        -c) COMPILE_ONLY=true ;;
-    esac
-done
-
-if [ "$COMPILE_ONLY" = true ]; then
-    exec "$CLANG" \
-        -target m65832-elf \
-        -ffreestanding \
-        -mllvm -disable-peephole \
-        -nostdlib \
-        "$@"
-else
-    exec "$CLANG" \
-        -target m65832-elf \
-        -ffreestanding \
-        -mllvm -disable-peephole \
-        -nostdlib \
-        -L"$COMPILER_RT_DIR" \
-        -lcompiler_rt \
-        -fuse-ld="$SCRIPT_DIR/m65832-gcc" \
-        "$@"
-fi
+# Put build-fast/bin first in PATH so clang finds ld.lld (not macOS ld)
+export PATH="/Users/benjamincooley/projects/llvm-m65832/build-fast/bin:$PATH"
+exec /Users/benjamincooley/projects/llvm-m65832/build-fast/bin/clang \
+    -target m65832-elf \
+    -ffreestanding \
+    "$@"

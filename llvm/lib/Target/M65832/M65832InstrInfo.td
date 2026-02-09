@@ -290,6 +290,9 @@ def LI : Pseudo<(outs GPR:$dst), (ins i32imm:$imm),
 // Load effective address from frame index
 // Computes: dst = FrameReg + offset
 // The frame index and offset operands are replaced by eliminateFrameIndex
+// Expands to sequences using A (TSX;TXA or TBA or LDA) and CLC;ADC for offset,
+// which clobber A, X (for SP-relative), and SR.
+let Defs = [A, X, SR] in
 def LEA_FI : Pseudo<(outs GPR:$dst), (ins i32imm:$fi, i32imm:$offset),
                     "# lea_fi $dst, $fi, $offset",
                     []>;
@@ -318,7 +321,14 @@ def LA_CP : Pseudo<(outs GPR:$dst), (ins i32imm:$addr),
 // NOTE: Patterns removed - prefer new extended instructions (ADDR_DP, etc.)
 //===----------------------------------------------------------------------===//
 
-let isCodeGenOnly = 1, Defs = [A] in {
+// NOTE: All legacy ALU pseudos expand to sequences through the accumulator
+// that clobber both A and SR (flags). For example, ADD_GPR expands to:
+//   LDA src1; CLC; ADC src2; STA dst
+// The CLC/SEC clobbers C flag, and ADC/SBC/AND/ORA/EOR set N,Z,C,V flags.
+// Missing Defs = [SR] here caused the machine scheduler at -O2 to reorder
+// these instructions between a compare and its branch, clobbering the flags
+// and causing infinite loops or wild jumps in complex code like vsprintf.
+let isCodeGenOnly = 1, Defs = [A, SR] in {
   // ADD: dst = src1 + src2 (legacy 3-operand form)
   // Expands to: LDA src1; CLC; ADC src2; STA dst
   def ADD_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
@@ -333,8 +343,7 @@ let isCodeGenOnly = 1, Defs = [A] in {
 
   // SUBC: dst = src1 - src2 (sets carry/borrow)
   // Expands to: LDA src1; SEC; SBC src2; STA dst
-  let Defs = [A, SR] in
-    def SUBC_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
+  def SUBC_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                          "# subc $dst, $src1, $src2",
                          [(set GPR:$dst, (subc GPR:$src1, GPR:$src2))]>;
 
@@ -560,6 +569,46 @@ def LDR_IMM : FE8_IMM<0x80, (outs GPR:$dst), (ins i32imm:$imm),
                       "LD\t$dst,#$imm",
                       [(set GPR:$dst, imm:$imm)]>;
 
+// LD.L - Load long (32-bit) from absolute address into register
+// No registers clobbered - direct GP register load
+def LDL_ABS : FE8_ABS<0x80, (outs GPR:$dst), (ins i32imm:$addr),
+                      "LD.L\t$dst,$addr",
+                      []>;
+
+// ST.L - Store long (32-bit) from register to absolute address
+// No registers clobbered - direct GP register store
+def STL_ABS : FE8_ABS<0x81, (outs), (ins GPR:$src, i32imm:$addr),
+                      "ST.L\t$addr,$src",
+                      []>;
+
+// LD.L - Load long (32-bit) from B-relative address (B+offset16) into register
+// No registers clobbered - direct GP register load
+let Uses = [B] in
+def LDL_BREL : FE8_BREL<0x80, (outs GPR:$dst), (ins i32imm:$offset),
+                         "LD.L\t$dst,B+$offset",
+                         []>;
+
+// ST.L - Store long (32-bit) from register to B-relative address (B+offset16)
+// No registers clobbered - direct GP register store
+let Uses = [B] in
+def STL_BREL : FE8_BREL<0x81, (outs), (ins GPR:$src, i32imm:$offset),
+                         "ST.L\tB+$offset,$src",
+                         []>;
+
+// LD.L - Load long (32-bit) indirect indexed (base),Y into register
+// Only Y is used (as index) - no A clobber
+let Uses = [Y] in
+def LDL_IND_Y : FE8_IND_Y<0x80, (outs GPR:$dst), (ins GPR:$base),
+                           "LD.L\t$dst, @$base, Y",
+                           []>;
+
+// ST.L - Store long (32-bit) from register via indirect indexed (base),Y
+// Only Y is used (as index) - no A clobber
+let Uses = [Y] in
+def STL_IND_Y : FE8_IND_Y<0x81, (outs), (ins GPR:$src, GPR:$base),
+                           "ST.L\t@$base, Y, $src",
+                           []>;
+
 //===----------------------------------------------------------------------===//
 // Extended ALU - Byte (8-bit) Operations
 // Used for char, uint8_t, int8_t loads and stores
@@ -760,7 +809,12 @@ def memsrc : Operand<i32> {
 }
 
 // Load from global/memory address into GPR
-let isCodeGenOnly = 1, mayLoad = 1, Defs = [A] in {
+// Uses extended LD instruction ($02 $80) which loads directly into a GP register.
+// The hardware instruction itself doesn't clobber anything, but the pseudo
+// expansion emits LDY_IMM for GPR/FP indirect-indexed paths, so Y is worst-case.
+// SP-relative fallback also clobbers A, X, Y.
+let isCodeGenOnly = 1, mayLoad = 1 in {
+  let Defs = [Y] in
   def LOAD32 : Pseudo<(outs GPR:$dst), (ins memsrc:$addr),
                       "# load32 $dst, $addr",
                       [(set GPR:$dst, (load ADDRri:$addr))]>;
@@ -770,7 +824,8 @@ let isCodeGenOnly = 1, mayLoad = 1, Defs = [A] in {
                              [(set GPR:$dst, (load (M65832Wrapper tglobaladdr:$addr)))]>;
 
   // 8-bit load (zero-extended to 32 bits)
-  // Matches anyextloadi8 - will be expanded to load + AND
+  // Matches anyextloadi8 - expanded uses LDY_IMM for indirect paths
+  let Defs = [Y] in
   def LOAD8 : Pseudo<(outs GPR:$dst), (ins memsrc:$addr),
                      "# load8 $dst, $addr",
                      [(set GPR:$dst, (extloadi8 ADDRri:$addr))]>;
@@ -780,6 +835,8 @@ let isCodeGenOnly = 1, mayLoad = 1, Defs = [A] in {
                             [(set GPR:$dst, (extloadi8 (M65832Wrapper tglobaladdr:$addr)))]>;
 
   // 16-bit load (zero-extended to 32 bits)
+  // Expanded uses LDY_IMM for indirect paths
+  let Defs = [Y] in
   def LOAD16 : Pseudo<(outs GPR:$dst), (ins memsrc:$addr),
                       "# load16 $dst, $addr",
                       [(set GPR:$dst, (extloadi16 ADDRri:$addr))]>;
@@ -790,11 +847,16 @@ let isCodeGenOnly = 1, mayLoad = 1, Defs = [A] in {
 }
 
 // Store GPR to global/memory address
-let isCodeGenOnly = 1, mayStore = 1, Defs = [A] in {
+// Uses extended ST instruction ($02 $81) which stores directly from a GP register.
+// The hardware instruction doesn't clobber anything, but expansion emits LDY_IMM
+// for GPR/FP indirect-indexed paths. SP-relative fallback clobbers A, X, Y.
+let isCodeGenOnly = 1, mayStore = 1 in {
+  let Defs = [Y] in
   def STORE32 : Pseudo<(outs), (ins GPR:$src, memsrc:$addr),
                        "# store32 $src, $addr",
                        [(store GPR:$src, ADDRri:$addr)]>;
 
+  let Defs = [A, Y] in
   def STORE32_IMM : Pseudo<(outs), (ins i32imm:$src, memsrc:$addr),
                            "# store32 $src, $addr",
                            [(store timm:$src, ADDRri:$addr)]>;
@@ -803,7 +865,8 @@ let isCodeGenOnly = 1, mayStore = 1, Defs = [A] in {
                               "# store32 $src, $addr",
                               [(store GPR:$src, (M65832Wrapper tglobaladdr:$addr))]>;
 
-  // 8-bit truncating store
+  // 8-bit truncating store - expansion uses LDY_IMM for indirect paths
+  let Defs = [Y] in
   def STORE8 : Pseudo<(outs), (ins GPR:$src, memsrc:$addr),
                       "# store8 $src, $addr",
                       [(truncstorei8 GPR:$src, ADDRri:$addr)]>;
@@ -812,7 +875,8 @@ let isCodeGenOnly = 1, mayStore = 1, Defs = [A] in {
                              "# store8 $src, $addr",
                              [(truncstorei8 GPR:$src, (M65832Wrapper tglobaladdr:$addr))]>;
 
-  // 16-bit truncating store
+  // 16-bit truncating store - expansion uses LDY_IMM for indirect paths
+  let Defs = [Y] in
   def STORE16 : Pseudo<(outs), (ins GPR:$src, memsrc:$addr),
                        "# store16 $src, $addr",
                        [(truncstorei16 GPR:$src, ADDRri:$addr)]>;
@@ -1555,7 +1619,8 @@ def DIVU_DP : F7_DP<0x05, (outs ACC:$dst, TREG:$rem), (ins ACC:$src1, DPOp:$src2
 
 // Multiply/Divide Pseudo Instructions for GPR operands
 // These expand via expandPostRAPseudo to: LDA src1; MUL/DIV src2; STA dst
-let isCodeGenOnly = 1 in {
+// They clobber A (accumulator), SR (flags from MUL/DIV), and T (high/remainder).
+let isCodeGenOnly = 1, Defs = [A, SR, T] in {
   def MUL_GPR : Pseudo<(outs GPR:$dst), (ins GPR:$src1, GPR:$src2),
                        "# mul $dst, $src1, $src2",
                        [(set GPR:$dst, (mul GPR:$src1, GPR:$src2))]>;
@@ -1988,48 +2053,71 @@ def FMOV_D : FPU_Mov<0xD9, "FMOV.D", FPR64>;
 def FSQRT_D : FPU_Unary<0xDA, "FSQRT.D", fsqrt, FPR64>;
 
 // FPU Register transfers ($E0-$E5)
-// FTOA: A = low 32 bits of Fd
+// These are raw bit transfers (bitcasts), NOT numeric conversions.
+// FTOA: A = Fd[31:0] (raw bits of FP register low word -> accumulator)
 def FTOA : Instruction {
   let Namespace = "M65832";
-  let OutOperandList = (outs GPR:$dst);
-  let InOperandList = (ins FPR64:$Fd);
+  let OutOperandList = (outs);
+  let InOperandList = (ins FPR32:$Fd);
   let AsmString = "FTOA\t$Fd";
   let Pattern = [];
-  let Size = 3;
+  let Size = 3;  // $02 $E0 $d0
+  let Defs = [A];
+  let isCodeGenOnly = 1;
 }
 
-// FTOT: T = high 32 bits of Fd
+// FTOT: T = Fd[63:32] (raw bits of FP register high word -> T register)
 def FTOT : Instruction {
   let Namespace = "M65832";
   let OutOperandList = (outs);
   let InOperandList = (ins FPR64:$Fd);
   let AsmString = "FTOT\t$Fd";
   let Pattern = [];
-  let Size = 3;
+  let Size = 3;  // $02 $E1 $d0
   let Defs = [T];
+  let isCodeGenOnly = 1;
 }
 
-// ATOF: low 32 bits of Fd = A
+// ATOF: Fd[31:0] = A (raw bits of accumulator -> FP register low word)
 def ATOF : Instruction {
   let Namespace = "M65832";
-  let OutOperandList = (outs FPR64:$dst);
-  let InOperandList = (ins FPR64:$Fd, GPR:$src);
+  let OutOperandList = (outs FPR32:$dst);
+  let InOperandList = (ins);
   let AsmString = "ATOF\t$dst";
   let Pattern = [];
-  let Size = 3;
-  let Constraints = "$Fd = $dst";
+  let Size = 3;  // $02 $E2 $d0
+  let Uses = [A];
+  let isCodeGenOnly = 1;
 }
 
-// TTOF: high 32 bits of Fd = T  
+// TTOF: Fd[63:32] = T (raw bits of T register -> FP register high word)
 def TTOF : Instruction {
   let Namespace = "M65832";
   let OutOperandList = (outs FPR64:$dst);
   let InOperandList = (ins FPR64:$Fd);
   let AsmString = "TTOF\t$dst";
   let Pattern = [];
-  let Size = 3;
+  let Size = 3;  // $02 $E3 $d0
   let Uses = [T];
   let Constraints = "$Fd = $dst";
+  let isCodeGenOnly = 1;
+}
+
+// Bitcast pseudos - expand to LDA/STA + FTOA/ATOF sequences in expandPostRAPseudo
+// BITCAST_F32_TO_I32: GPR dst = bitcast(FPR32 src) - raw bit transfer, no conversion
+def BITCAST_F32_TO_I32 : Pseudo<(outs GPR:$dst), (ins FPR32:$src),
+                                 "# bitcast_f32_to_i32 $dst, $src",
+                                 [(set GPR:$dst, (bitconvert FPR32:$src))]> {
+  let isCodeGenOnly = 1;
+  let Defs = [A];
+}
+
+// BITCAST_I32_TO_F32: FPR32 dst = bitcast(GPR src) - raw bit transfer, no conversion
+def BITCAST_I32_TO_F32 : Pseudo<(outs FPR32:$dst), (ins GPR:$src),
+                                 "# bitcast_i32_to_f32 $dst, $src",
+                                 [(set FPR32:$dst, (bitconvert GPR:$src))]> {
+  let isCodeGenOnly = 1;
+  let Defs = [A];
 }
 
 // FCVT.DS: Fd = (double)Fs (single to double conversion)
