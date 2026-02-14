@@ -78,11 +78,10 @@ void M65832AsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
                                   uint64_t Value, bool IsResolved) {
   // Call maybeAddReloc to emit relocations for unresolved symbols
   maybeAddReloc(F, Fixup, Target, Value, IsResolved);
-  
+
   if (!Value)
     return; // Nothing to apply
 
-  unsigned Offset = Fixup.getOffset();
   unsigned Kind = Fixup.getKind();
   unsigned NumBytes;
 
@@ -108,9 +107,11 @@ void M65832AsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     break;
   }
 
-  // Write the fixup value in little-endian format
+  // Write the fixup value in little-endian format.
+  // Note: Data already points to the fixup location (the caller adds
+  // Fixup.getOffset() to the base pointer before calling applyFixup).
   for (unsigned i = 0; i < NumBytes; ++i) {
-    Data[Offset + i] = Value & 0xFF;
+    Data[i] |= Value & 0xFF;
     Value >>= 8;
   }
 }
