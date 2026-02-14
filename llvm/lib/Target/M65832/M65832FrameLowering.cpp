@@ -91,12 +91,14 @@ void M65832FrameLowering::emitEpilogue(MachineFunction &MF,
 
   uint64_t StackSize = MFI.getStackSize();
 
-  // Deallocate stack frame if needed
+  // Restore SP from frame pointer (B register).
+  // The prologue saves SP to B after allocating locals, so B points to the
+  // base of the local frame. We must restore from B (not the current SP)
+  // because callee-saved register pushes and outgoing call arg allocation
+  // move SP below B during the function body.
   if (StackSize > 0) {
-    // Restore SP by adding StackSize: SP = SP + StackSize
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::TSX), M65832::X);
-    BuildMI(MBB, MBBI, DL, TII.get(M65832::TXA), M65832::A)
-        .addReg(M65832::X);
+    // TBA; CLC; ADC #StackSize; TAX; TXS
+    BuildMI(MBB, MBBI, DL, TII.get(M65832::TBA), M65832::A);
     BuildMI(MBB, MBBI, DL, TII.get(M65832::CLC));
     BuildMI(MBB, MBBI, DL, TII.get(M65832::ADC_IMM), M65832::A)
         .addReg(M65832::A)
