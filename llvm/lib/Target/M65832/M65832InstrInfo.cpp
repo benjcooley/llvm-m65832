@@ -226,8 +226,14 @@ void M65832InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
         .addImm(0)
         .addMemOperand(MMO);
   } else if (RC == &M65832::ACCRegClass) {
-    BuildMI(MBB, I, DL, get(M65832::PHA))
-        .addReg(SrcReg, getKillRegState(isKill));
+    // Use STA to B-relative stack slot instead of PHA.
+    // PHA/PLA is a push/pop stack operation that consumes the value on pull,
+    // making it unusable as a proper spill slot (e.g., reloads inside loops
+    // would only get the correct value on the first iteration).
+    BuildMI(MBB, I, DL, get(M65832::STA_ABS))
+        .addReg(SrcReg, getKillRegState(isKill))
+        .addFrameIndex(FrameIndex)
+        .addMemOperand(MMO);
   } else if (M65832::FPR32RegClass.hasSubClassEq(RC)) {
     // Use STF32 pseudo for 32-bit floating point
     BuildMI(MBB, I, DL, get(M65832::STF32))
@@ -273,7 +279,12 @@ void M65832InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
         .addImm(0)
         .addMemOperand(MMO);
   } else if (RC == &M65832::ACCRegClass) {
-    BuildMI(MBB, I, DL, get(M65832::PLA), DestReg);
+    // Use LDA from B-relative stack slot instead of PLA.
+    // PLA is a destructive pop that consumes the stack value, making it
+    // impossible to reload the same spill slot more than once (e.g., in loops).
+    BuildMI(MBB, I, DL, get(M65832::LDA_ABS), DestReg)
+        .addFrameIndex(FrameIndex)
+        .addMemOperand(MMO);
   } else if (M65832::FPR32RegClass.hasSubClassEq(RC)) {
     // Use LDF32 pseudo for 32-bit floating point
     BuildMI(MBB, I, DL, get(M65832::LDF32), DestReg)
