@@ -109,6 +109,17 @@ void M65832InstPrinter::printBRelAddr(const MCInst *MI, unsigned OpNo,
   }
 }
 
+void M65832InstPrinter::printStackRelOperand(const MCInst *MI, unsigned OpNo,
+                                               raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isImm()) {
+    O << '$' << format_hex_no_prefix(Op.getImm() & 0xFF, 2);
+  } else if (Op.isExpr()) {
+    MAI.printExpr(O, *Op.getExpr());
+  }
+  O << ",S";
+}
+
 void M65832InstPrinter::printDPOperand(const MCInst *MI, unsigned OpNo,
                                          raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);

@@ -48,6 +48,7 @@ public:
   void printIndirectOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printIndirectYOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printIndirectDPOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
+  void printStackRelOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
 };
 
 } // namespace llvm

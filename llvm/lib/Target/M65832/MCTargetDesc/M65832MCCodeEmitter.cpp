@@ -126,7 +126,17 @@ uint8_t M65832MCCodeEmitter::getOpcode(unsigned MIOpcode) const {
   case M65832::STZ_DP:    return 0x64;
   case M65832::STZr:      return 0x64;  // GPR variant uses same opcode
   case M65832::STZ_ABS:   return 0x9C;
-  
+
+  // Stack-relative
+  case M65832::LDA_SR:    return 0xA3;
+  case M65832::STA_SR:    return 0x83;
+  case M65832::ADC_SR:    return 0x63;
+  case M65832::SBC_SR:    return 0xE3;
+  case M65832::AND_SR:    return 0x23;
+  case M65832::ORA_SR:    return 0x03;
+  case M65832::EOR_SR:    return 0x43;
+  case M65832::CMP_SR:    return 0xC3;
+
   // Arithmetic
   case M65832::ADC_DP:    return 0x65;
   case M65832::ADCr:      return 0x65;  // GPR variant uses same opcode
