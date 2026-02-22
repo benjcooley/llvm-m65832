@@ -101,9 +101,11 @@ def M65832selectccfp : SDNode<"M65832ISD::SELECT_CC_FP", SDT_M65832SelectCCFP, [
 //===----------------------------------------------------------------------===//
 
 // AsmOperandClass for memory/address operands - matches what the parser produces
+// Excludes stack-relative operands (those use M65832StackRelAsmOperand)
 def M65832MemAsmOperand : AsmOperandClass {
   let Name = "Mem";
   let RenderMethod = "addImmOperands";
+  let PredicateMethod = "isNonStackRelMem";
 }
 
 def M65832ImmAsmOperand : AsmOperandClass {
@@ -187,6 +189,20 @@ def MemOp : Operand<i32> {
 def BRelOp : Operand<i32> {
   let PrintMethod = "printBRelAddr";
   let ParserMatchClass = M65832MemAsmOperand;
+}
+
+// Parser match class for stack-relative operands (offset,S)
+def M65832StackRelAsmOperand : AsmOperandClass {
+  let Name = "StackRel";
+  let RenderMethod = "addImmOperands";
+  let PredicateMethod = "isStackRelative";
+}
+
+// Stack-relative operand (1-byte offset from SP)
+def SROp : Operand<i32> {
+  let PrintMethod = "printStackRelOperand";
+  let EncoderMethod = "getDPOpValue";
+  let ParserMatchClass = M65832StackRelAsmOperand;
 }
 
 // Immediate operands
@@ -923,6 +939,11 @@ def LDA_IND_Y : F1<0xB1, (outs ACC:$dst), (ins DPOp:$ptr),
                   "LDA\t($ptr),Y",
                   []>;
 
+// LDA stack-relative (SP + offset)
+def LDA_SR : F1<0xA3, (outs ACC:$dst), (ins SROp:$addr),
+               "LDA\t$addr",
+               []>;
+
 // LDX - Load X register from DP
 def LDX_DP : F1<0xA6, (outs XREG:$dst), (ins DPOp:$src),
                "LDX\t$src",
@@ -972,6 +993,11 @@ let isCodeGenOnly = 1 in
 def STA_IND_Y : F1<0x91, (outs), (ins ACC:$src, DPOp:$ptr),
                   "STA\t($ptr),Y",
                   []>;
+
+// STA stack-relative (SP + offset)
+def STA_SR : F1<0x83, (outs), (ins ACC:$src, SROp:$addr),
+               "STA\t$addr",
+               []>;
 
 // STX - Store X register to DP
 def STX_DP : F1<0x86, (outs), (ins XREG:$src, DPOp:$dst),
@@ -1027,6 +1053,24 @@ def SBC_DP : F1<0xE5, (outs ACC:$dst), (ins ACC:$src1, DPOp:$src2),
 def SBC_IMM : F8<0xE9, (outs ACC:$dst), (ins ACC:$src1, i32imm:$imm),
                 "SBC\t#$imm",
                 []> {
+  let Constraints = "$src1 = $dst";
+  let Defs = [SR];
+  let Uses = [SR];
+}
+
+// ADC stack-relative (SP + offset)
+def ADC_SR : F1<0x63, (outs ACC:$dst), (ins ACC:$src1, SROp:$src2),
+               "ADC\t$src2",
+               []> {
+  let Constraints = "$src1 = $dst";
+  let Defs = [SR];
+  let Uses = [SR];
+}
+
+// SBC stack-relative (SP + offset)
+def SBC_SR : F1<0xE3, (outs ACC:$dst), (ins ACC:$src1, SROp:$src2),
+               "SBC\t$src2",
+               []> {
   let Constraints = "$src1 = $dst";
   let Defs = [SR];
   let Uses = [SR];
@@ -1105,6 +1149,30 @@ def EOR_DP : F1<0x45, (outs ACC:$dst), (ins ACC:$src1, DPOp:$src2),
 def EOR_IMM : F8<0x49, (outs ACC:$dst), (ins ACC:$src1, i32imm:$imm),
                 "EOR\t#$imm",
                 []> {
+  let Constraints = "$src1 = $dst";
+  let Defs = [SR];
+}
+
+// AND stack-relative (SP + offset)
+def AND_SR : F1<0x23, (outs ACC:$dst), (ins ACC:$src1, SROp:$src2),
+               "AND\t$src2",
+               []> {
+  let Constraints = "$src1 = $dst";
+  let Defs = [SR];
+}
+
+// ORA stack-relative (SP + offset)
+def ORA_SR : F1<0x03, (outs ACC:$dst), (ins ACC:$src1, SROp:$src2),
+               "ORA\t$src2",
+               []> {
+  let Constraints = "$src1 = $dst";
+  let Defs = [SR];
+}
+
+// EOR stack-relative (SP + offset)
+def EOR_SR : F1<0x43, (outs ACC:$dst), (ins ACC:$src1, SROp:$src2),
+               "EOR\t$src2",
+               []> {
   let Constraints = "$src1 = $dst";
   let Defs = [SR];
 }
@@ -1191,6 +1259,13 @@ def CMP_DP : F1<0xC5, (outs), (ins ACC:$lhs, DPOp:$rhs),
 def CMP_IMM : F8<0xC9, (outs), (ins ACC:$lhs, i32imm:$rhs),
                 "CMP\t#$rhs",
                 []> {
+  let Defs = [SR];
+}
+
+// CMP stack-relative (SP + offset)
+def CMP_SR : F1<0xC3, (outs), (ins ACC:$lhs, SROp:$rhs),
+               "CMP\t$rhs",
+               []> {
   let Defs = [SR];
 }
 

@@ -65,6 +65,7 @@ private:
     bool IndirectLong;
     bool StackRelative;
     bool BRelative;  // B+offset syntax (B is frame pointer)
+    unsigned HexDigits; // Number of hex digits in $xxx literal (0 = symbol/expr)
   };
 
   union {
@@ -104,7 +105,8 @@ public:
   // Memory operand
   static std::unique_ptr<M65832Operand>
   createMem(unsigned Base, const MCExpr *Disp, unsigned Index, bool Indirect,
-            bool IndirectLong, bool StackRel, bool BRel, SMLoc S, SMLoc E) {
+            bool IndirectLong, bool StackRel, bool BRel, unsigned HexDigits,
+            SMLoc S, SMLoc E) {
     auto Op = std::make_unique<M65832Operand>(k_Memory, S, E);
     Op->Mem.BaseReg = Base;
     Op->Mem.Disp = Disp;
@@ -113,6 +115,7 @@ public:
     Op->Mem.IndirectLong = IndirectLong;
     Op->Mem.StackRelative = StackRel;
     Op->Mem.BRelative = BRel;
+    Op->Mem.HexDigits = HexDigits;
     return Op;
   }
 
@@ -157,6 +160,20 @@ public:
       return false;
     // Indirect addressing with no Y index - either (Rn) or ($dp)
     return Mem.Indirect && Mem.IndexReg == 0;
+  }
+
+  // Check if this is stack-relative addressing: offset,S
+  bool isStackRelative() const {
+    if (Kind != k_Memory)
+      return false;
+    return Mem.StackRelative && !Mem.Indirect;
+  }
+
+  // Check if this is a non-stack-relative memory operand (DP, B-relative, etc.)
+  bool isNonStackRelMem() const {
+    if (Kind != k_Memory)
+      return false;
+    return !Mem.StackRelative;
   }
 
   StringRef getToken() const {
@@ -225,8 +242,9 @@ class M65832AsmParser : public MCTargetAsmParser {
   const MCInstrInfo &MII;
 
   unsigned parseRegisterName(StringRef Name);
-  bool parseHexNumber(int64_t &Value);
-  bool parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc);
+  bool parseHexNumber(int64_t &Value, unsigned &HexDigitCount);
+  bool parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc,
+                             unsigned &HexDigitCount);
 
   ParseStatus parseOperand(OperandVector &Operands, StringRef Mnemonic);
   ParseStatus parseImmediate(OperandVector &Operands);
@@ -345,87 +363,50 @@ ParseStatus M65832AsmParser::tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
   return ParseStatus::Success;
 }
 
-// Parse hex number with $ prefix (6502 style) or 0x prefix
-// This is tricky because $01FF gets tokenized as $ + 01 + FF by the lexer
-bool M65832AsmParser::parseHexNumber(int64_t &Value) {
+// Parse hex number with $ prefix (Motorola/6502 style)
+// With LexMotorolaIntegers enabled, $xx is tokenized as a single Integer token
+// whose getString() starts with '$'. This preserves leading zeros for digit
+// count tracking (e.g., $08 → 2 digits, $000EF328 → 8 digits).
+// HexDigitCount is set to the number of hex digits parsed (0 if not $hex)
+bool M65832AsmParser::parseHexNumber(int64_t &Value, unsigned &HexDigitCount) {
   const AsmToken &Tok = getParser().getTok();
-  
-  if (Tok.is(AsmToken::Dollar)) {
-    // $hex syntax - consume adjacent tokens that form hex digits
-    SMLoc PrevEnd = Tok.getEndLoc();
-    getParser().Lex(); // Eat '$'
-    
-    std::string HexStr;
-    
-    // Keep consuming tokens that are adjacent and look like hex
-    while (true) {
-      const AsmToken &NextTok = getParser().getTok();
-      
-      // Check if this token is adjacent to the previous one
-      if (NextTok.getLoc().getPointer() != PrevEnd.getPointer())
-        break;
-      
-      StringRef TokStr;
-      
-      if (NextTok.is(AsmToken::Integer)) {
-        TokStr = NextTok.getString();
-      } else if (NextTok.is(AsmToken::Identifier)) {
-        TokStr = NextTok.getString();
-        // Check if it's all hex digits
-        bool AllHex = true;
-        for (char c : TokStr) {
-          if (!isxdigit(c)) {
-            AllHex = false;
-            break;
-          }
-        }
-        if (!AllHex)
-          break;
-      } else {
-        break;
-      }
-      
-      HexStr += TokStr.str();
-      PrevEnd = NextTok.getEndLoc();
-      getParser().Lex();
-    }
-    
-    if (HexStr.empty())
-      return Error(getParser().getTok().getLoc(), "expected hex number after '$'");
-    
-    // Parse as hex
-    if (StringRef(HexStr).getAsInteger(16, Value))
-      return Error(getParser().getTok().getLoc(), "invalid hex number");
-    
-    return false;
-  }
-  
+  HexDigitCount = 0;
+
   if (Tok.is(AsmToken::Integer)) {
+    StringRef TokStr = Tok.getString();
+    if (TokStr.starts_with("$")) {
+      // Motorola-style $hex integer — extract digit count from raw string
+      StringRef HexStr = TokStr.drop_front(1); // skip '$'
+      HexDigitCount = HexStr.size();
+    }
     Value = Tok.getIntVal();
     getParser().Lex();
     return false;
   }
-  
+
   return true;
 }
 
 // Parse expression with support for $hex syntax
-bool M65832AsmParser::parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc) {
+// With LexMotorolaIntegers, $hex values are single Integer tokens.
+// HexDigitCount is set to the number of hex digits if a $xxx literal was parsed.
+bool M65832AsmParser::parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc,
+                                             unsigned &HexDigitCount) {
   const AsmToken &Tok = getParser().getTok();
-  
-  // Handle $hex prefix
-  if (Tok.is(AsmToken::Dollar)) {
-    SMLoc StartLoc = Tok.getLoc();
+  HexDigitCount = 0;
+
+  // Handle $hex integers (Motorola-style, lexed as single Integer token)
+  if (Tok.is(AsmToken::Integer) && Tok.getString().starts_with("$")) {
     int64_t Value;
-    if (parseHexNumber(Value))
+    if (parseHexNumber(Value, HexDigitCount))
       return true;
     Res = MCConstantExpr::create(Value, getContext());
     EndLoc = getParser().getTok().getLoc();
     return false;
   }
-  
+
   // Handle B+symbol for B-relative addressing (B is frame pointer)
-  if (Tok.is(AsmToken::Identifier) && 
+  if (Tok.is(AsmToken::Identifier) &&
       Tok.getString().equals_insensitive("B")) {
     getParser().Lex(); // Eat 'B'
     if (getParser().getTok().isNot(AsmToken::Plus))
@@ -434,7 +415,7 @@ bool M65832AsmParser::parseM65832Expression(const MCExpr *&Res, SMLoc &EndLoc) {
     // Parse the symbol/expression after B+
     return getParser().parseExpression(Res, EndLoc);
   }
-  
+
   // Default to standard expression parsing
   return getParser().parseExpression(Res, EndLoc);
 }
@@ -451,7 +432,8 @@ ParseStatus M65832AsmParser::parseImmediate(OperandVector &Operands) {
   getParser().Lex(); // Eat '#'
 
   const MCExpr *Expr;
-  if (parseM65832Expression(Expr, E))
+  unsigned HexDigits;
+  if (parseM65832Expression(Expr, E, HexDigits))
     return ParseStatus::Failure;
 
   Operands.push_back(M65832Operand::createImm(Expr, S, E));
@@ -468,6 +450,7 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   bool IndirectLong = false;
   bool StackRelative = false;
   bool BRelative = false;
+  unsigned HexDigits = 0;
 
   // Check for B+offset (B-relative, B is frame pointer)
   if (getParser().getTok().is(AsmToken::Identifier) &&
@@ -483,7 +466,7 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   if (getParser().getTok().is(AsmToken::LParen)) {
     Indirect = true;
     getParser().Lex();
-    
+
     // Check if the next token is a GPR register (for indirect register addressing)
     // In M65832 32-bit mode, (Rn) means indirect through register Rn (true register, not DP)
     if (getParser().getTok().is(AsmToken::Identifier)) {
@@ -499,7 +482,7 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   } else if (getParser().getTok().is(AsmToken::LBrac)) {
     IndirectLong = true;
     getParser().Lex();
-    
+
     // Check if the next token is a GPR register
     if (getParser().getTok().is(AsmToken::Identifier)) {
       StringRef TokStr = getParser().getTok().getString();
@@ -514,7 +497,7 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
   }
 
   // Parse displacement using M65832 expression parser
-  if (parseM65832Expression(Disp, E))
+  if (parseM65832Expression(Disp, E, HexDigits))
     return ParseStatus::Failure;
 
   // Check for ,X ,Y ,S
@@ -530,6 +513,23 @@ ParseStatus M65832AsmParser::parseMemoryOperand(OperandVector &Operands) {
     } else if (IndexName.equals_insensitive("S")) {
       StackRelative = true;
       getParser().Lex();
+    }
+  }
+
+  // Enforce hex digit count addressing rules for numeric literals
+  // Enforce hex digit count addressing rules:
+  // $xx (1-2 digits) = DP or stack-relative
+  // $xxxx (3-4 digits) requires B+ prefix for B-relative
+  // $xxxxxx (5-6 digits) = 24-bit absolute (ILLEGAL)
+  // $xxxxxxxx (7-8 digits) = 32-bit absolute
+  if (HexDigits > 0 && !Indirect && !IndirectLong) {
+    if (HexDigits >= 3 && HexDigits <= 4 && !BRelative && !StackRelative) {
+      return Error(S, "ambiguous address width; use B+$xxxx"
+                      " for B-relative or $xxxxxxxx for 32-bit absolute");
+    }
+    if (HexDigits >= 5 && HexDigits <= 6) {
+      return Error(S, "24-bit absolute addressing is not supported; use B+$xxxx"
+                      " for B-relative or $xxxxxxxx for 32-bit absolute");
     }
   }
 
@@ -564,8 +564,8 @@ close_bracket:
 
   E = getParser().getTok().getLoc();
   Operands.push_back(M65832Operand::createMem(BaseReg, Disp, IndexReg, Indirect,
-                                               IndirectLong, StackRelative, 
-                                               BRelative, S, E));
+                                               IndirectLong, StackRelative,
+                                               BRelative, HexDigits, S, E));
   return ParseStatus::Success;
 }
 

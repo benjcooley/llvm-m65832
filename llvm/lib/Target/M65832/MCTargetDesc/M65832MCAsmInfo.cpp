@@ -53,4 +53,8 @@ M65832MCAsmInfo::M65832MCAsmInfo(const Triple &TT) {
   
   // Little endian
   IsLittleEndian = true;
+
+  // Enable Motorola-style $hex integers so $08, $000EF328 etc. are parsed
+  // correctly without leading zeros being misinterpreted as octal.
+  UseMotorolaIntegers = true;
 }
