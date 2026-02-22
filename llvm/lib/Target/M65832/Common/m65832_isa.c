@@ -19,7 +19,7 @@
 /* Standard 6502/65816 instructions */
 const M65_Instruction m65_instructions[] = {
     /*                IMP   ACC   IMM   DP    DPX   DPY   ABS   ABSX  ABSY  IND   INDX  INDY  INDL  INDLY ABSL  ABSLX REL   RELL  SR    SRIY  MVP   MVN   AIND  AINDX ALIND IMM32 ABS32 */
-    { "ADC",        { __,   __,   0x69, 0x65, 0x75, __,   0x6D, 0x7D, 0x79, __,   0x61, 0x71, 0x67, 0x77, 0x6F, 0x7F, __,   __,   0x63, 0x73, __,   __,   __,   __,   __,   __,   __   }, 0 },
+    { "ADC",        { __,   __,   0x69, 0x65, 0x75, __,   0x6D, 0x7D, 0x79, 0x72, 0x61, 0x71, 0x67, 0x77, 0x6F, 0x7F, __,   __,   0x63, 0x73, __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "AND",        { __,   __,   0x29, 0x25, 0x35, __,   0x2D, 0x3D, 0x39, __,   0x21, 0x31, 0x27, 0x37, 0x2F, 0x3F, __,   __,   0x23, 0x33, __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "ASL",        { __,   0x0A, __,   0x06, 0x16, __,   0x0E, 0x1E, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "BCC",        { __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   0x90, __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
@@ -53,7 +53,7 @@ const M65_Instruction m65_instructions[] = {
     { "JMP",        { __,   __,   __,   __,   __,   __,   0x4C, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   0x6C, 0x7C, __,   __,   __   }, 0 },
     { "JSL",        { __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   0x22, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "JSR",        { __,   __,   __,   __,   __,   __,   0x20, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
-    { "LDA",        { __,   __,   0xA9, 0xA5, 0xB5, __,   0xAD, 0xBD, 0xB9, __,   0xA1, 0xB1, 0xA7, 0xB7, 0xAF, 0xBF, __,   __,   0xA3, 0xB3, __,   __,   __,   __,   __,   __,   __   }, 0 },
+    { "LDA",        { __,   __,   0xA9, 0xA5, 0xB5, __,   0xAD, 0xBD, 0xB9, 0xB2, 0xA1, 0xB1, 0xA7, 0xB7, 0xAF, 0xBF, __,   __,   0xA3, 0xB3, __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "LDX",        { __,   __,   0xA2, 0xA6, __,   0xB6, 0xAE, __,   0xBE, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "LDY",        { __,   __,   0xA0, 0xA4, 0xB4, __,   0xAC, 0xBC, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "LSR",        { __,   0x4A, __,   0x46, 0x56, __,   0x4E, 0x5E, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
@@ -88,7 +88,7 @@ const M65_Instruction m65_instructions[] = {
     { "SED",        { 0xF8, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "SEI",        { 0x78, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "SEP",        { __,   __,   0xE2, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
-    { "STA",        { __,   __,   __,   0x85, 0x95, __,   0x8D, 0x9D, 0x99, __,   0x81, 0x91, 0x87, 0x97, 0x8F, 0x9F, __,   __,   0x83, 0x93, __,   __,   __,   __,   __,   __,   __   }, 0 },
+    { "STA",        { __,   __,   __,   0x85, 0x95, __,   0x8D, 0x9D, 0x99, 0x92, 0x81, 0x91, 0x87, 0x97, 0x8F, 0x9F, __,   __,   0x83, 0x93, __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "STP",        { 0xDB, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "STX",        { __,   __,   __,   0x86, __,   0x96, 0x8E, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
     { "STY",        { __,   __,   __,   0x84, 0x94, __,   0x8C, __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __,   __   }, 0 },
@@ -159,14 +159,26 @@ const M65_ExtInstruction m65_ext_instructions[] = {
     { "PLB32",  0x73, M65_AM_IMP  },
     { "PHVBR",  0x74, M65_AM_IMP  },
     { "PLVBR",  0x75, M65_AM_IMP  },
-    /* Temp register */
+    /* B register transfers */
+    { "TAB",    0x91, M65_AM_IMP  },
+    { "TBA",    0x92, M65_AM_IMP  },
+    { "TXB",    0x93, M65_AM_IMP  },
+    { "TBX",    0x94, M65_AM_IMP  },
+    { "TYB",    0x95, M65_AM_IMP  },
+    { "TBY",    0x96, M65_AM_IMP  },
+    /* Stack pointer to B register transfer */
+    { "TSPB",   0xA4, M65_AM_IMP  },
+    /* DP indirect jump/call (extended opcodes, NOT base $FC) */
+    { "JMP",    0xA5, M65_AM_IND  },  /* JMP (dp) - indirect jump through DP */
+    { "JSR",    0xA6, M65_AM_IND  },  /* JSR (dp) - indirect call through DP */
+    /* Temp register transfers */
     { "TTA",    0x9A, M65_AM_IMP  },
     { "TAT",    0x9B, M65_AM_IMP  },
     /* 64-bit load/store */
     { "LDQ",    0x9C, M65_AM_DP   },
-    { "LDQ",    0x9D, M65_AM_ABS  },
+    { "LDQ",    0x9D, M65_AM_INDY },
     { "STQ",    0x9E, M65_AM_DP   },
-    { "STQ",    0x9F, M65_AM_ABS  },
+    { "STQ",    0x9F, M65_AM_INDY },
     /* LEA */
     { "LEA",    0xA0, M65_AM_DP   },
     { "LEA",    0xA1, M65_AM_DPX  },
@@ -335,10 +347,13 @@ const M65_ExtInstruction *m65_find_ext_instruction(const char *mnemonic, M65_Add
             m65_ext_instructions[i].mode == mode)
             return &m65_ext_instructions[i];
     }
-    /* For implied instructions, just match name */
-    for (int i = 0; m65_ext_instructions[i].name; i++) {
-        if (strcasecmp_local(m65_ext_instructions[i].name, mnemonic) == 0)
-            return &m65_ext_instructions[i];
+    /* For implied mode operand, also try matching implied instructions by name only */
+    if (mode == M65_AM_IMP) {
+        for (int i = 0; m65_ext_instructions[i].name; i++) {
+            if (strcasecmp_local(m65_ext_instructions[i].name, mnemonic) == 0 &&
+                m65_ext_instructions[i].mode == M65_AM_IMP)
+                return &m65_ext_instructions[i];
+        }
     }
     return NULL;
 }
