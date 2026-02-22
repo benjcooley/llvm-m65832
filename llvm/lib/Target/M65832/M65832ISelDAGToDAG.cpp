@@ -290,9 +290,11 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
         }
       }
 
-      // For other disjoint OR cases, fall through to normal OR selection.
-      // Converting to ADD via ReplaceNode can disconnect multi-use values
-      // (e.g., a value used for both a store and a return).
+      // For other disjoint OR cases, convert to ADD.
+      SDLoc DL(N);
+      SDValue Add = CurDAG->getNode(ISD::ADD, DL, N->getValueType(0), LHS, RHS);
+      ReplaceNode(N, Add.getNode());
+      return;
     }
     break;
   }
