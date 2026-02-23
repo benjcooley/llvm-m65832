@@ -84,9 +84,14 @@ M65832TargetLowering::M65832TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SRL, MVT::i32, Legal);
   setOperationAction(ISD::SRA, MVT::i32, Legal);
   
-  // Rotates - also supported by barrel shifter
-  setOperationAction(ISD::ROTL, MVT::i32, Legal);
-  setOperationAction(ISD::ROTR, MVT::i32, Legal);
+  // Rotates: enable native ops for optimized builds, keep -O0 conservative.
+  // NOTE: native ROL/ROR is generally more efficient (fewer instructions),
+  // but we observed debug-build fragility; use expand-at-O0 as a safety mode.
+  const bool UseNativeRotate = TM.getOptLevel() != CodeGenOptLevel::None;
+  setOperationAction(ISD::ROTL, MVT::i32,
+                     UseNativeRotate ? Legal : Expand);
+  setOperationAction(ISD::ROTR, MVT::i32,
+                     UseNativeRotate ? Legal : Expand);
   
   // Multi-word shifts (for 64-bit shifts on 32-bit target)
   // Custom lowering uses the barrel shifter for efficient implementation

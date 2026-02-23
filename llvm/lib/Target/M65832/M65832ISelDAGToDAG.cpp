@@ -290,11 +290,9 @@ void M65832DAGToDAGISel::Select(SDNode *N) {
         }
       }
 
-      // For other disjoint OR cases, convert to ADD.
-      SDLoc DL(N);
-      SDValue Add = CurDAG->getNode(ISD::ADD, DL, N->getValueType(0), LHS, RHS);
-      ReplaceNode(N, Add.getNode());
-      return;
+      // For all other OR(disjoint, ...) cases, fall through to tablegen
+      // patterns and select as a regular OR node.
+      break;
     }
     break;
   }
