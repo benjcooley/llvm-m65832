@@ -131,12 +131,15 @@ __crt_init:
     .long __libc_init_array               // 32-bit absolute address
     
     //
-    // Call main(argc=0, argv=NULL, envp=NULL)
+    // Call main(argc=1, argv=__argv, envp=NULL)
     // ABI: R0=argc, R1=argv, R2=envp
     //
-    .byte 0xA9, 0x00, 0x00, 0x00, 0x00   // LDA #0
-    .byte 0x85, 0x00                      // STA dp $00 (R0 = argc = 0)
-    .byte 0x85, 0x04                      // STA dp $04 (R1 = argv = NULL)
+    .byte 0xA9, 0x01, 0x00, 0x00, 0x00   // LDA #1 (argc=1)
+    .byte 0x85, 0x00                      // STA dp $00 (R0 = argc = 1)
+    .byte 0xA9                            // LDA #imm32
+    .long __argv                          // argv = &__argv array
+    .byte 0x85, 0x04                      // STA dp $04 (R1 = argv)
+    .byte 0xA9, 0x00, 0x00, 0x00, 0x00   // LDA #0 (envp = NULL)
     .byte 0x85, 0x08                      // STA dp $08 (R2 = envp = NULL)
     .byte 0x20                            // JSR opcode
     .long main                            // 32-bit absolute address
@@ -167,6 +170,16 @@ __crt_init:
 .Lfunc_end:
     .size _start, .Lfunc_end - _start
     .size __crt_init, .Lfunc_end - __crt_init
+
+// Static argv: argv[0] = "prog", argv[1] = NULL (terminator)
+    .section .rodata
+    .align 4
+__prog_name:
+    .asciz "prog"
+    .align 4
+__argv:
+    .long __prog_name
+    .long 0
 
 // NOTE: __libc_init_array, __libc_fini_array, and _exit are NOT defined here.
 // They come from picolibc's libc.a and libsys.a respectively.
