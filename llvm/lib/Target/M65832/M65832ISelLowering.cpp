@@ -473,6 +473,18 @@ SDValue M65832TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
     break;
   }
 
+  // The backend's integer compare/branch path is carry/sign-flag oriented.
+  // Lower signed compares by biasing both operands with sign-bit XOR and
+  // using the equivalent unsigned predicate.
+  if (CC == ISD::SETLT || CC == ISD::SETGE) {
+    SDValue SignBit = DAG.getConstant(
+        APInt::getSignMask(LHS.getValueType().getSizeInBits()), DL,
+        LHS.getValueType());
+    LHS = DAG.getNode(ISD::XOR, DL, LHS.getValueType(), LHS, SignBit);
+    RHS = DAG.getNode(ISD::XOR, DL, RHS.getValueType(), RHS, SignBit);
+    CC = (CC == ISD::SETLT) ? ISD::SETULT : ISD::SETUGE;
+  }
+
   // For integers, use fused compare-and-branch to prevent flag clobbering
   SDValue CCVal = DAG.getConstant(CC, DL, MVT::i32);
   return DAG.getNode(M65832ISD::BR_CC_CMP, DL, Op.getValueType(), Chain,
@@ -518,6 +530,15 @@ SDValue M65832TargetLowering::LowerSELECT_CC(SDValue Op,
     break;
   default:
     break;
+  }
+
+  if (CC == ISD::SETLT || CC == ISD::SETGE) {
+    SDValue SignBit = DAG.getConstant(
+        APInt::getSignMask(LHS.getValueType().getSizeInBits()), DL,
+        LHS.getValueType());
+    LHS = DAG.getNode(ISD::XOR, DL, LHS.getValueType(), LHS, SignBit);
+    RHS = DAG.getNode(ISD::XOR, DL, RHS.getValueType(), RHS, SignBit);
+    CC = (CC == ISD::SETLT) ? ISD::SETULT : ISD::SETUGE;
   }
 
   // For integers, include LHS/RHS so each SELECT has its own CMP
@@ -570,6 +591,15 @@ SDValue M65832TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
     break;
   default:
     break;
+  }
+
+  if (CC == ISD::SETLT || CC == ISD::SETGE) {
+    SDValue SignBit = DAG.getConstant(
+        APInt::getSignMask(LHS.getValueType().getSizeInBits()), DL,
+        LHS.getValueType());
+    LHS = DAG.getNode(ISD::XOR, DL, LHS.getValueType(), LHS, SignBit);
+    RHS = DAG.getNode(ISD::XOR, DL, RHS.getValueType(), RHS, SignBit);
+    CC = (CC == ISD::SETLT) ? ISD::SETULT : ISD::SETUGE;
   }
 
   // For integers, include LHS/RHS for comparison
@@ -934,12 +964,20 @@ SDValue M65832TargetLowering::LowerFormalArguments(
       // Argument passed on stack
       assert(VA.isMemLoc() && "Must be memory location");
       
-      int FI = MFI.CreateFixedObject(VA.getLocVT().getSizeInBits() / 8,
-                                     VA.getLocMemOffset() + StackArgBase, true);
-      SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
-      SDValue Load = DAG.getLoad(VA.getLocVT(), DL, Chain, FIN,
-                                 MachinePointerInfo::getFixedStack(MF, FI));
-      InVals.push_back(Load);
+      unsigned Size;
+      if (Ins[i].Flags.isByVal()) {
+        Size = Ins[i].Flags.getByValSize();
+        // ByVal: callee receives a pointer to the struct on stack, not the value
+        int FI = MFI.CreateFixedObject(Size, VA.getLocMemOffset() + StackArgBase, true);
+        InVals.push_back(DAG.getFrameIndex(FI, MVT::i32));
+      } else {
+        Size = VA.getLocVT().getSizeInBits() / 8;
+        int FI = MFI.CreateFixedObject(Size, VA.getLocMemOffset() + StackArgBase, true);
+        SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
+        SDValue Load = DAG.getLoad(VA.getLocVT(), DL, Chain, FIN,
+                                   MachinePointerInfo::getFixedStack(MF, FI));
+        InVals.push_back(Load);
+      }
     }
   }
   
@@ -976,25 +1014,33 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   
   unsigned StackSize = CCInfo.getStackSize();
   
-  // For variadic calls, non-fixed (unnamed) arguments must be passed on the
-  // stack so the callee can access them via va_arg.  The CC may have assigned
-  // them to registers; override those assignments here.
+  // For variadic calls, unnamed arguments must appear on the stack in source
+  // order for callee va_arg walking. Rebuild the unnamed-arg stack layout
+  // instead of only remapping register-assigned varargs.
   if (isVarArg) {
-    unsigned ExtraStack = 0;
+    unsigned FixedStackSize = 0;
     for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
-      if (Outs[i].Flags.isVarArg() && ArgLocs[i].isRegLoc()) {
+      if (!Outs[i].Flags.isVarArg() && ArgLocs[i].isMemLoc()) {
+        unsigned Size = ArgLocs[i].getLocVT().getSizeInBits() / 8;
+        unsigned End = static_cast<unsigned>(ArgLocs[i].getLocMemOffset()) + Size;
+        FixedStackSize = std::max(FixedStackSize, End);
+      }
+    }
+
+    unsigned VarArgOffset = FixedStackSize;
+    for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+      if (Outs[i].Flags.isVarArg()) {
         MVT LocVT = ArgLocs[i].getLocVT();
         unsigned Size = LocVT.getSizeInBits() / 8;
-        unsigned Offset = StackSize + ExtraStack;
-        Offset = alignTo(Offset, std::max(4u, Size));
+        unsigned Offset = alignTo(VarArgOffset, 4u);
         ArgLocs[i] = CCValAssign::getMem(i, ArgLocs[i].getValVT(),
                                          Offset,
                                          LocVT,
                                          ArgLocs[i].getLocInfo());
-        ExtraStack = Offset + Size - StackSize;
+        VarArgOffset = Offset + Size;
       }
     }
-    StackSize += ExtraStack;
+    StackSize = std::max(StackSize, VarArgOffset);
   }
   
   // M65832 JSR pushes a 4-byte return address onto the stack in 32-bit mode.
@@ -1011,7 +1057,27 @@ SDValue M65832TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // Process arguments
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
     CCValAssign &VA = ArgLocs[i];
-    SDValue Arg = OutVals[i];
+    unsigned ValNo = VA.getValNo();
+    SDValue Arg = OutVals[ValNo];
+    
+    // ByVal: copy struct contents from pointer to stack, not the pointer itself
+    if (VA.isMemLoc() && Outs[ValNo].Flags.isByVal()) {
+      SDValue ByValPtr = Arg;
+      unsigned ByValSize = Outs[ValNo].Flags.getByValSize();
+      SDValue StackPtr = DAG.getCopyFromReg(Chain, DL, M65832::SP, MVT::i32);
+      int DestOffset = VA.getLocMemOffset() + RetAddrSize;
+      for (unsigned Offset = 0; Offset < ByValSize; Offset += 4) {
+        SDValue SrcPtr = DAG.getNode(ISD::ADD, DL, MVT::i32, ByValPtr,
+                                     DAG.getIntPtrConstant(Offset, DL));
+        SDValue Load = DAG.getLoad(MVT::i32, DL, Chain, SrcPtr,
+                                  MachinePointerInfo());
+        SDValue DstPtr = DAG.getNode(ISD::ADD, DL, MVT::i32, StackPtr,
+                                     DAG.getIntPtrConstant(DestOffset + Offset, DL));
+        Chain = DAG.getStore(Load.getValue(1), DL, Load, DstPtr, MachinePointerInfo());
+        MemOpChains.push_back(Chain);
+      }
+      continue;
+    }
     
     // Promote if necessary
     switch (VA.getLocInfo()) {

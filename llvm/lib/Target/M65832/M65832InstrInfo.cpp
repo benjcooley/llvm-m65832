@@ -1068,13 +1068,27 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
 
   case M65832::JSR_IND: {
     // Indirect call through register (function pointer)
-    // Load the target address into A, then use JSR (dp) where dp holds the address
+    // Use JSR (dp); the register file is direct-page mapped.
     Register TargetReg = MI.getOperand(0).getReg();
     unsigned TargetDP = getDPOffset(TargetReg - M65832::R0);
-    
-    // JSR indirect uses JSR (dp) - opcode $FC dp
-    // The dp location contains the 32-bit target address
+
+    // JSR indirect uses JSR (dp) - opcode $FC dp.
     BuildMI(MBB, MI, DL, get(M65832::JSR_DP_IND))
+        .addImm(TargetDP);
+    break;
+  }
+
+  case M65832::BRIND_PSEUDO: {
+    // Indirect branch through register value. Like JSR_IND, lower via
+    // the register's direct-page slot and JMP (dp).
+    Register TargetReg = MI.getOperand(0).getReg();
+    unsigned TargetDP = getDPOffset(TargetReg - M65832::R0);
+
+    BuildMI(MBB, MI, DL, get(M65832::STW_DP))
+        .addReg(TargetReg)
+        .addImm(TargetDP);
+
+    BuildMI(MBB, MI, DL, get(M65832::JMP_DP_IND))
         .addImm(TargetDP);
     break;
   }
@@ -1857,9 +1871,12 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     case ISD::SETONE:
     case ISD::SETUNE:  SkipBrOpc = M65832::BEQ; break;  // skip if EQ
     case ISD::SETLT:
-    case ISD::SETOLT:  SkipBrOpc = M65832::BPL; break;  // skip if >= (N=0)
+    case ISD::SETOLT:
     case ISD::SETGE:
-    case ISD::SETOGE:  SkipBrOpc = M65832::BMI; break;  // skip if < (N=1)
+    case ISD::SETOGE:
+      // Signed comparisons require N xor V, not just N.
+      NeedDualBranch = true;
+      break;
     case ISD::SETGT:
     case ISD::SETOGT:  
       // GT: true if N=0 AND Z=0. Skip second copy if Z=1 OR N=1
@@ -1886,7 +1903,33 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     if (NeedDualBranch) {
       // For GT/LE/UGT/ULE we need special handling
       // MOVR_DP is 5 bytes
-      if (EffectiveCC == ISD::SETGT || EffectiveCC == ISD::SETOGT) {
+      if (EffectiveCC == ISD::SETLT || EffectiveCC == ISD::SETOLT) {
+        // Skip copy if !(N xor V), i.e. N == V.
+        // V=0 path: skip when N=0 (BPL). V=1 path: skip when N=1 (BMI).
+        // Layout:
+        //   BVC +9
+        //   BMI +14
+        //   BRA +6
+        //   BPL +8
+        //   MOVR ...
+        BuildMI(MBB, MI, DL, get(M65832::BVC)).addImm(9);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(14);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(6);
+        BuildMI(MBB, MI, DL, get(M65832::BPL)).addImm(8);
+      } else if (EffectiveCC == ISD::SETGE || EffectiveCC == ISD::SETOGE) {
+        // Skip copy if (N xor V), i.e. N != V.
+        // V=0 path: skip when N=1 (BMI). V=1 path: skip when N=0 (BPL).
+        // Layout:
+        //   BVC +9
+        //   BPL +14
+        //   BRA +6
+        //   BMI +8
+        //   MOVR ...
+        BuildMI(MBB, MI, DL, get(M65832::BVC)).addImm(9);
+        BuildMI(MBB, MI, DL, get(M65832::BPL)).addImm(14);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(6);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(8);
+      } else if (EffectiveCC == ISD::SETGT || EffectiveCC == ISD::SETOGT) {
         // GT: skip second copy if Z=1 OR N=1
         // BEQ at X: skip to X+11 (past 2 branches + MOVR), so *+11, offset = 8
         // BMI at X+3: skip to X+11, so *+8, offset = 5
@@ -1986,9 +2029,11 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     case ISD::SETONE:
     case ISD::SETUNE:  SkipBrOpc = M65832::BEQ; break;
     case ISD::SETLT:
-    case ISD::SETOLT:  SkipBrOpc = M65832::BPL; break;
+    case ISD::SETOLT:
     case ISD::SETGE:
-    case ISD::SETOGE:  SkipBrOpc = M65832::BMI; break;
+    case ISD::SETOGE:
+      NeedDualBranch = true;
+      break;
     case ISD::SETGT:
     case ISD::SETOGT:  NeedDualBranch = true; break;
     case ISD::SETLE:
@@ -2001,7 +2046,17 @@ bool M65832InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     }
     
     if (NeedDualBranch) {
-      if (EffectiveCC == ISD::SETGT || EffectiveCC == ISD::SETOGT) {
+      if (EffectiveCC == ISD::SETLT || EffectiveCC == ISD::SETOLT) {
+        BuildMI(MBB, MI, DL, get(M65832::BVC)).addImm(9);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(14);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(6);
+        BuildMI(MBB, MI, DL, get(M65832::BPL)).addImm(8);
+      } else if (EffectiveCC == ISD::SETGE || EffectiveCC == ISD::SETOGE) {
+        BuildMI(MBB, MI, DL, get(M65832::BVC)).addImm(9);
+        BuildMI(MBB, MI, DL, get(M65832::BPL)).addImm(14);
+        BuildMI(MBB, MI, DL, get(M65832::BRA)).addImm(6);
+        BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(8);
+      } else if (EffectiveCC == ISD::SETGT || EffectiveCC == ISD::SETOGT) {
         BuildMI(MBB, MI, DL, get(M65832::BEQ)).addImm(11);
         BuildMI(MBB, MI, DL, get(M65832::BMI)).addImm(8);
       } else if (EffectiveCC == ISD::SETLE || EffectiveCC == ISD::SETOLE) {

@@ -44,6 +44,19 @@ The M65832 backend uses **hardware FPU** with a hard-float ABI:
 - F0-F13 are caller-saved
 - F14-F15 are callee-saved
 
+### ABI Alignment Rules (authoritative)
+
+M65832 currently uses the following ABI conventions in this tree:
+
+- C frontend type alignment for 64-bit scalars is 8 bytes
+  (`_Alignof(long long)`, `_Alignof(double)`, `_Alignof(long double)`).
+- Calling convention stack slots for `i64` / `f64` are 8-byte size with
+  4-byte stack-slot alignment (`CCAssignToStack<8, 4>`).
+
+This split mirrors other 32-bit ABIs where type preferred alignment and stack
+argument slot alignment differ. Call lowering and `va_arg` handling must stay
+consistent with the calling convention stack-slot rule.
+
 **Example generated code:**
 ```c
 float fadd(float a, float b) { return a + b; }
@@ -221,6 +234,30 @@ clang -target m65832-unknown-elf -S -O2 -o test.s test.c
 
 # Run on emulator
 ../m65832/emu/m65832emu test.bin
+```
+
+### LLVM/Clang test protocol note (do not lose)
+
+For cross-target execution validation, tests must run through an adapter that
+maps emulator output to the testing framework protocol:
+
+- run ELF under `m65832emu`
+- parse and propagate test exit code
+- filter emulator trace/status noise from stdout
+- return mapped status to the runner
+
+Reference implementation in this repo:
+
+- `m65832-stdlib/picolibc/run-m65832.sh`
+- `m65832-stdlib/picolibc/cross-m65832.txt` (`exe_wrapper`)
+
+If `m65832emu` is not active while tests run, the test run is not considered an
+emulator-backed run.
+
+Quick verification:
+
+```bash
+pgrep -af m65832emu
 ```
 
 ## Clang Target Support

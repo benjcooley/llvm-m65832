@@ -212,15 +212,15 @@ bool M65832FrameLowering::spillCalleeSavedRegisters(
   if (MI != MBB.end())
     DL = MI->getDebugLoc();
 
-  // Save each callee-saved register by pushing to stack
+  // Save each callee-saved register by pushing to stack.
   // For M65832, we save GPRs via: LDA $dp; PHA
   for (const CalleeSavedInfo &Info : CSI) {
     Register Reg = Info.getReg();
-    
+
     // Get the DP offset for this register
     unsigned RegNum = Reg - M65832::R0;
     unsigned DPOffset = M65832InstrInfo::getDPOffset(RegNum);
-    
+
     // LDA from DP location, then push
     BuildMI(MBB, MI, DL, TII.get(M65832::LDA_DP), M65832::A)
         .addImm(DPOffset);
@@ -287,11 +287,11 @@ bool M65832FrameLowering::restoreCalleeSavedRegisters(
   // Restore each callee-saved register by popping from stack (reverse order)
   for (auto I = CSI.rbegin(), E = CSI.rend(); I != E; ++I) {
     Register Reg = I->getReg();
-    
+
     // Get the DP offset for this register
     unsigned RegNum = Reg - M65832::R0;
     unsigned DPOffset = M65832InstrInfo::getDPOffset(RegNum);
-    
+
     // Pop into A, then store to DP location
     BuildMI(MBB, MI, DL, TII.get(M65832::PLA), M65832::A);
     BuildMI(MBB, MI, DL, TII.get(M65832::STA_DP))

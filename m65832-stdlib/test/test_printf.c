@@ -163,6 +163,20 @@ void test_sprintf_multi(void) {
     TEST("sprintf multi 3", strcmp(buf, "[A][BC][123][ff]") == 0);
 }
 
+/* Test float formatting (va_arg for double) */
+void test_sprintf_float(void) {
+    char buf[128];
+
+    sprintf(buf, "%.6f", 1.23);
+    TEST("sprintf %f 1.23", strstr(buf, "1.23") != NULL);
+
+    sprintf(buf, "%.6f", 12312.1);
+    TEST("sprintf %f 12312.1", strstr(buf, "12312") != NULL);
+
+    sprintf(buf, "foo %f %f %f %f", 1.23, 12312.1, 3.1, 13.1);
+    TEST("sprintf %f x4", strstr(buf, "1.23") != NULL && strstr(buf, "12312") != NULL);
+}
+
 /* Test pointer formatting */
 void test_sprintf_pointer(void) {
     char buf[128];
@@ -180,6 +194,7 @@ int main(void) {
     test_sprintf_width();
     test_sprintf_precision();
     test_sprintf_long();
+    test_sprintf_float();
     test_snprintf();
     test_sprintf_multi();
     test_sprintf_pointer();

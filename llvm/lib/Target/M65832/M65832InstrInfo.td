@@ -1488,6 +1488,13 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP_IND : F3<0x6C, (outs), (ins GPR:$target), "JMP\t$target", []>;
 }
 
+// Indirect branch pseudo lowered to JMP (dp) via register DP slot.
+let isCodeGenOnly = 1, isBranch = 1, isTerminator = 1,
+    isBarrier = 1, isIndirectBranch = 1 in
+def BRIND_PSEUDO : Pseudo<(outs), (ins GPR:$target),
+                          "JMP\t($target)",
+                          [(brind GPR:$target)]>;
+
 //===----------------------------------------------------------------------===//
 // Call/Return Instructions
 //===----------------------------------------------------------------------===//
@@ -1847,9 +1854,12 @@ let isCodeGenOnly = 1, mayLoad = 1 in {
                         "# ldf32.cp $dst, $addr",
                         [(set FPR32:$dst, (load (M65832Wrapper tconstpool:$addr)))]>;
   
+  // Post-RA expansion may synthesize address calculation through A/X and R0.
   def LDF32 : Pseudo<(outs FPR32:$dst), (ins memsrc:$addr),
                      "# ldf32 $dst, $addr",
-                     [(set FPR32:$dst, (load ADDRri:$addr))]>;
+                     [(set FPR32:$dst, (load ADDRri:$addr))]> {
+    let Defs = [A, X, R0];
+  }
 }
 
 // f32 store to global address
@@ -1860,7 +1870,9 @@ let isCodeGenOnly = 1, mayStore = 1 in {
   
   def STF32 : Pseudo<(outs), (ins FPR32:$src, memsrc:$addr),
                      "# stf32 $src, $addr",
-                     [(store FPR32:$src, ADDRri:$addr)]>;
+                     [(store FPR32:$src, ADDRri:$addr)]> {
+    let Defs = [A, X, R0];
+  }
 }
 
 // f64 load from global address
@@ -1876,7 +1888,9 @@ let isCodeGenOnly = 1, mayLoad = 1 in {
   
   def LDF64 : Pseudo<(outs FPR64:$dst), (ins memsrc:$addr),
                      "# ldf64 $dst, $addr",
-                     [(set FPR64:$dst, (load ADDRri:$addr))]>;
+                     [(set FPR64:$dst, (load ADDRri:$addr))]> {
+    let Defs = [A, X, R0];
+  }
 }
 
 // f64 store to global address
@@ -1887,7 +1901,9 @@ let isCodeGenOnly = 1, mayStore = 1 in {
   
   def STF64 : Pseudo<(outs), (ins FPR64:$src, memsrc:$addr),
                      "# stf64 $src, $addr",
-                     [(store FPR64:$src, ADDRri:$addr)]>;
+                     [(store FPR64:$src, ADDRri:$addr)]> {
+    let Defs = [A, X, R0];
+  }
 }
 
 // Physical FPU Load/Store instructions (for assembly)
